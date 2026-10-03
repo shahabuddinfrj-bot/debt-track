@@ -1,3 +1,4 @@
+import { pushToSupabase, pullFromSupabase } from './supabaseClient';
 import {
   AuditLog,
   AuthUser,
@@ -113,6 +114,7 @@ class StorageService {
         depositSchedules: this.get(STORAGE_KEYS.DEPOSIT_SCHEDULES, {}),
         depositTransactions: this.get(STORAGE_KEYS.DEPOSIT_TRANSACTIONS, []),
       };
+      await pushToSupabase(this.get<AuthUser | null>(STORAGE_KEYS.CURRENT_USER, MASTER_USER)?.id || MASTER_USER.id, payload);
       await fetch('/api/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -125,6 +127,17 @@ class StorageService {
 
   public async pullFromServer(): Promise<boolean> {
     try {
+      const cloudData = await pullFromSupabase(this.get<AuthUser | null>(STORAGE_KEYS.CURRENT_USER, MASTER_USER)?.id || MASTER_USER.id);
+      if (cloudData) {
+        if (cloudData.loans && Array.isArray(cloudData.loans) && cloudData.loans.length > 0) {
+          this.set(STORAGE_KEYS.LOANS, cloudData.loans);
+          if (cloudData.schedules) this.set(STORAGE_KEYS.SCHEDULES, cloudData.schedules);
+          if (cloudData.documents) this.set(STORAGE_KEYS.DOCUMENTS, cloudData.documents);
+          if (cloudData.notes) this.set(STORAGE_KEYS.NOTES, cloudData.notes);
+          if (cloudData.settings) this.set(STORAGE_KEYS.SETTINGS, cloudData.settings);
+          return true;
+        }
+      }
       const res = await fetch('/api/sync', {
         cache: 'no-store',
         headers: {
