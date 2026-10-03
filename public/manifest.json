@@ -1,0 +1,26 @@
+{
+  "id": "/",
+  "name": "DebtTrack - Personal Loan & EMI Manager",
+  "short_name": "DebtTrack",
+  "description": "Production-ready personal finance app for tracking loans, EMIs, repayment schedules, prepayments, interest calculations, and debt payoff analytics.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0b121e",
+  "theme_color": "#0b121e",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

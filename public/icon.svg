@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="50%" stop-color="#0b121e" />
+      <stop offset="100%" stop-color="#134e4a" />
+    </linearGradient>
+    <linearGradient id="textGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" />
+      <stop offset="60%" stop-color="#f8fafc" />
+      <stop offset="100%" stop-color="#34d399" />
+    </linearGradient>
+    <linearGradient id="borderGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#334155" />
+      <stop offset="50%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+  </defs>
+
+  <!-- Base background #0b121e -->
+  <rect width="512" height="512" rx="110" fill="#0b121e" />
+
+  <!-- Inner squircle badge -->
+  <rect x="24" y="24" width="464" height="464" rx="96" fill="url(#bgGrad)" stroke="url(#borderGrad)" stroke-width="6" />
+
+  <!-- D Glyph -->
+  <path d="M 130 150 L 225 150 C 275 150 305 185 305 256 C 305 327 275 362 225 362 L 130 362 Z M 172 192 L 172 320 L 220 320 C 248 320 263 298 263 256 C 263 214 248 192 220 192 Z" fill="url(#textGrad)" />
+
+  <!-- T Glyph -->
+  <path d="M 280 150 L 400 150 L 400 192 L 361 192 L 361 362 L 319 362 L 319 192 L 280 192 Z" fill="url(#textGrad)" />
+
+  <!-- Emerald Accent indicator node -->
+  <circle cx="256" cy="405" r="14" fill="#10b981" />
+</svg>

@@ -1,0 +1,8 @@
+{
+  "name": "DebtTrack - Personal Loan & EMI Manager",
+  "description": "Production-ready personal finance app for tracking loans, EMIs, repayment schedules, prepayments, interest calculations, and debt payoff analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
