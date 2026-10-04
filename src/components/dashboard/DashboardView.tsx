@@ -43,14 +43,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   // Deposits & Savings direct calculation
   const depositsList = typeof storageService.getDeposits === 'function' ? storageService.getDeposits() : [];
+  
   const calculatedMonthlyDeposit = depositsList
-    .filter((d: any) => (d.status === 'ACTIVE' || !d.status) && (d.type === 'RD' || d.accountType === 'RD'))
-    .reduce((sum: number, d: any) => sum + Number(d.monthlyAmount || d.monthlyOutlay || d.monthlyDeposit || 0), 0);
-  const calculatedActiveDepositsCount = depositsList.filter((d: any) => d.status === 'ACTIVE' || !d.status).length;
+    .filter((d: any) => String(d.status || '').toUpperCase() !== 'CLOSED' && String(d.status || '').toUpperCase() !== 'MATURED')
+    .reduce((sum: number, d: any) => {
+      const val = d.monthlyOutlay ?? d.monthlyAmount ?? d.monthlyDeposit ?? d.installmentAmount ?? d.emiAmount ?? d.monthlyContribution ?? d.amount ?? 0;
+      return sum + (Number(val) || 0);
+    }, 0);
+
+  const calculatedActiveDepositsCount = depositsList.filter(
+    (d: any) => String(d.status || '').toUpperCase() !== 'CLOSED' && String(d.status || '').toUpperCase() !== 'MATURED'
+  ).length;
+
   const calculatedTotalDepositBalance = depositsList
-    .filter((d: any) => d.status === 'ACTIVE' || !d.status)
-    .reduce((sum: number, d: any) => sum + Number(d.currentBalance || d.totalDeposited || 0), 0);
-  const calculatedTotalCommitment = (metrics.totalMonthlyEmi || 0) + (metrics.totalMonthlyDeposit || calculatedMonthlyDeposit);
+    .filter((d: any) => String(d.status || '').toUpperCase() !== 'CLOSED')
+    .reduce((sum: number, d: any) => sum + (Number(d.currentBalance ?? d.totalDeposited ?? d.balance ?? 0) || 0), 0);
+
+  const calculatedTotalCommitment = (Number(metrics.totalMonthlyEmi) || 0) + calculatedMonthlyDeposit;
 
   // Find loans finishing earliest and latest
   const sortedByClosure = [...activeLoans]
@@ -189,10 +198,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               Total Deposit Contribution (Savings)
             </div>
             <div className="text-2xl font-bold font-mono text-emerald-400 mt-1">
-              {formatCurrency(metrics.totalMonthlyDeposit || calculatedMonthlyDeposit, settings.currencySymbol, settings.currency)}
+              {formatCurrency(calculatedMonthlyDeposit, settings.currencySymbol, settings.currency)}
             </div>
             <div className="text-[11px] text-slate-400 mt-0.5">
-              {metrics.activeDepositsCount || calculatedActiveDepositsCount} recurring savings/RD plans
+              {calculatedActiveDepositsCount} recurring savings/RD plans
             </div>
           </div>
 
@@ -202,7 +211,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               Total Monthly Commitment
             </div>
             <div className="text-2xl font-bold font-mono text-emerald-300 mt-1">
-              {formatCurrency(metrics.totalMonthlyCommitment || calculatedTotalCommitment, settings.currencySymbol, settings.currency)}
+              {formatCurrency(calculatedTotalCommitment, settings.currencySymbol, settings.currency)}
             </div>
             <div className="text-[11px] text-emerald-400/80 mt-0.5">
               Loan EMI + Deposit Contribution
@@ -291,6 +300,69 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             {overdueSummary.hasOverdue
               ? `${overdueSummary.count} missed payment${overdueSummary.count > 1 ? 's' : ''}`
               : 'No missed payments'}
+          </p>
+        </div>
+      </div>
+
+      {/* Additional Deposit Overview Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Total Deposit Balance */}
+        <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
+          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-2">
+            <span className="text-[11px] font-bold uppercase tracking-wider">Total Deposit Balance</span>
+            <PiggyBank className="w-4 h-4 text-emerald-500" />
+          </div>
+          <div className="text-2xl font-bold font-mono text-emerald-600 dark:text-emerald-400 tracking-tight">
+            {formatCurrency(calculatedTotalDepositBalance, settings.currencySymbol, settings.currency)}
+          </div>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+            Across {calculatedActiveDepositsCount} active deposits
+          </p>
+        </div>
+
+        {/* Monthly Deposit */}
+        <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
+          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-2">
+            <span className="text-[11px] font-bold uppercase tracking-wider">Monthly Deposit</span>
+            <Calendar className="w-4 h-4 text-emerald-500" />
+          </div>
+          <div className="text-2xl font-bold font-mono text-slate-900 dark:text-white tracking-tight">
+            {formatCurrency(calculatedMonthlyDeposit, settings.currencySymbol, settings.currency)}
+          </div>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+            Recurring RD & savings
+          </p>
+        </div>
+
+        {/* Net Financial Position */}
+        <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
+          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-2">
+            <span className="text-[11px] font-bold uppercase tracking-wider">Net Financial Position</span>
+            <TrendingUp className="w-4 h-4 text-slate-400" />
+          </div>
+          <div className="text-2xl font-bold font-mono text-slate-900 dark:text-white tracking-tight">
+            {formatCurrency(
+              calculatedTotalDepositBalance - Number(metrics.totalOutstanding || 0),
+              settings.currencySymbol,
+              settings.currency
+            )}
+          </div>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+            Net Debt / Asset Position
+          </p>
+        </div>
+
+        {/* Deposits Maturing Soon */}
+        <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
+          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-2">
+            <span className="text-[11px] font-bold uppercase tracking-wider">Deposits Maturing Soon</span>
+            <Clock className="w-4 h-4 text-slate-400" />
+          </div>
+          <div className="text-2xl font-bold font-mono text-slate-900 dark:text-white tracking-tight">
+            {depositsList.filter((d: any) => d.status === 'MATURED').length}
+          </div>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+            Within the next 90 days
           </p>
         </div>
       </div>
@@ -440,7 +512,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
             <button
               onClick={() => onNavigate('loans')}
-              className="text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition-colors flex items-center gap-1"
+              className="text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:white transition-colors flex items-center gap-1"
             >
               <span>View all loan records</span>
               <ChevronRight className="w-3.5 h-3.5" />
