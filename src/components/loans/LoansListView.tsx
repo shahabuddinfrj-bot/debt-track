@@ -1,33 +1,29 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { storage } from '../../services/storage';
-
-export interface LoanItem {
-  id: string;
-  name?: string;
-  loanName?: string;
-  lender?: string;
-  bankName?: string;
-  type?: string;
-  loanType?: string;
-  status?: string;
-  outstanding?: number;
-  currentOutstanding?: number;
-  monthlyEmi?: number;
-  emiAmount?: number;
-  paidTenure?: number;
-  paidEmis?: number;
-  totalTenure?: number;
-  tenureMonths?: number;
-  nextDueDate?: string;
-  accountNumber?: string;
-  notes?: string;
-}
+import React, { useState, useMemo, useEffect } from 'react';
+import {
+  Search,
+  Filter,
+  Plus,
+  LayoutGrid,
+  List as ListIcon,
+  ChevronRight,
+  ArrowUpDown,
+  CreditCard,
+  Building,
+  Calendar,
+  AlertTriangle,
+  CheckCircle2,
+  Clock,
+  Archive,
+} from 'lucide-react';
+import { Loan, LoanStatus, LoanType, UserSettings } from '../../types/loan';
+import { storageService } from '../../services/storage';
+import { formatCurrency, formatDate, formatMonthYear } from '../../utils/formatters';
 
 interface LoansListViewProps {
-  settings?: any;
-  onOpenAddLoan?: () => void;
+  settings: UserSettings;
+  onOpenAddLoan: () => void;
   onSelectLoan: (loanId: string) => void;
-  onQuickPay?: (loanId: string) => void;
+  onQuickPay: (loanId: string) => void;
 }
 
 export const LoansListView: React.FC<LoansListViewProps> = ({
@@ -36,14 +32,13 @@ export const LoansListView: React.FC<LoansListViewProps> = ({
   onSelectLoan,
   onQuickPay,
 }) => {
-  const [loans, setLoans] = useState<LoanItem[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | LoanStatus>('ALL');
   const [typeFilter, setTypeFilter] = useState<string>('ALL');
   const [lenderFilter, setLenderFilter] = useState<string>('ALL');
-  const [sortBy, setSortBy] = useState<string>('OUTSTANDING_DESC');
+  const [sortBy, setSortBy] = useState<'OUTSTANDING_DESC' | 'EMI_DESC' | 'DUE_DATE' | 'NAME'>('OUTSTANDING_DESC');
 
-  // Fix 1: LocalStorage mein save rakhein taaki 10s auto-refresh par table view reset na ho
+  // Fix 1: LocalStorage persistence taaki 10 second refresh par table view grid mein reset na ho
   const [viewMode, setViewMode] = useState<'grid' | 'table'>(() => {
     try {
       const saved = localStorage.getItem('debt_track_view_mode');
@@ -62,222 +57,449 @@ export const LoansListView: React.FC<LoansListViewProps> = ({
     }
   };
 
-  // Loans ko storage se fetch karein
-  const loadData = () => {
-    try {
-      if (storage && typeof storage.getLoans === 'function') {
-        const data = storage.getLoans();
-        setLoans(Array.isArray(data) ? data : []);
-      } else {
-        const raw = localStorage.getItem('debt_track_loans') || localStorage.getItem('loans');
-        if (raw) setLoans(JSON.parse(raw));
-      }
-    } catch (err) {
-      console.error('Failed to load loans:', err);
-    }
-  };
-
+  // Fix 2: Sirf initial mount par load hoga taaki cards click ya refresh par blink na karein
+  const [isLoaded, setIsLoaded] = useState(false);
   useEffect(() => {
-    loadData();
-    // 10 second refresh sirf data update karega, viewMode ko reset nahi karega
-    const interval = setInterval(loadData, 10000);
-    return () => clearInterval(interval);
+    setIsLoaded(true);
   }, []);
 
-  // Filter & Search Logic
+  const allLoans = storageService.getLoans(false);
+
+  // Extract distinct lenders & types for filters
+  const lenders = useMemo(() => {
+    const set = new Set<string>();
+    allLoans.forEach((l) => {
+      if (l.lender) set.add(l.lender);
+    });
+    return Array.from(set).sort();
+  }, [allLoans]);
+
+  const loanTypes = useMemo(() => {
+    const set = new Set<string>();
+    allLoans.forEach((l) => {
+      if (l.loanType) set.add(l.loanType);
+    });
+    return Array.from(set).sort();
+  }, [allLoans]);
+
+  // Filtered and sorted loans
   const filteredLoans = useMemo(() => {
-    return loans.filter((loan: any) => {
-      const name = (loan.name || loan.loanName || '').toLowerCase();
-      const lender = (loan.lender || loan.bankName || '').toLowerCase();
-      const acc = (loan.accountNumber || '').toLowerCase();
-      const notes = (loan.notes || '').toLowerCase();
-      const q = searchQuery.toLowerCase();
+    return allLoans
+      .filter((loan) => {
+        // Status filter
+        if (statusFilter !== 'ALL' && loan.status !== statusFilter) {
+          return false;
+        }
 
-      const matchesSearch = !q || name.includes(q) || lender.includes(q) || acc.includes(q) || notes.includes(q);
-      const loanStatus = (loan.status || 'ACTIVE').toUpperCase();
-      const matchesStatus = statusFilter === 'ALL' || loanStatus === statusFilter;
-      const loanType = loan.type || loan.loanType || '';
-      const matchesType = typeFilter === 'ALL' || loanType === typeFilter;
-      const matchesLender = lenderFilter === 'ALL' || lender === lenderFilter.toLowerCase();
+        // Type filter
+        if (typeFilter !== 'ALL' && loan.loanType !== typeFilter) {
+          return false;
+        }
 
-      return matchesSearch && matchesStatus && matchesType && matchesLender;
-    });
-  }, [loans, searchQuery, statusFilter, typeFilter, lenderFilter]);
+        // Lender filter
+        if (lenderFilter !== 'ALL' && loan.lender !== lenderFilter) {
+          return false;
+        }
 
-  // Sort Logic
-  const sortedLoans = useMemo(() => {
-    return [...filteredLoans].sort((a: any, b: any) => {
-      const outA = Number(a.outstanding ?? a.currentOutstanding ?? 0);
-      const outB = Number(b.outstanding ?? b.currentOutstanding ?? 0);
-      const emiA = Number(a.monthlyEmi ?? a.emiAmount ?? 0);
-      const emiB = Number(b.monthlyEmi ?? b.emiAmount ?? 0);
+        // Search text
+        if (searchQuery.trim()) {
+          const q = searchQuery.toLowerCase();
+          const matchesName = loan.name.toLowerCase().includes(q);
+          const matchesLender = loan.lender.toLowerCase().includes(q);
+          const matchesAccount = loan.accountNumber.toLowerCase().includes(q);
+          const matchesType = loan.loanType.toLowerCase().includes(q);
+          const matchesNotes = loan.notes?.toLowerCase().includes(q);
+          if (!matchesName && !matchesLender && !matchesAccount && !matchesType && !matchesNotes) {
+            return false;
+          }
+        }
 
-      if (sortBy === 'OUTSTANDING_DESC') return outB - outA;
-      if (sortBy === 'EMI_DESC') return emiB - emiA;
-      if (sortBy === 'NAME') {
-        const nameA = a.name || a.loanName || '';
-        const nameB = b.name || b.loanName || '';
-        return nameA.localeCompare(nameB);
-      }
-      const dueA = new Date(a.nextDueDate || 0).getTime();
-      const dueB = new Date(b.nextDueDate || 0).getTime();
-      return dueA - dueB;
-    });
-  }, [filteredLoans, sortBy]);
+        return true;
+      })
+      .sort((a, b) => {
+        if (sortBy === 'OUTSTANDING_DESC') {
+          return b.outstandingPrincipal - a.outstandingPrincipal;
+        }
+        if (sortBy === 'EMI_DESC') {
+          return b.emiAmount - a.emiAmount;
+        }
+        if (sortBy === 'DUE_DATE') {
+          return (a.nextEmiDate || '9999').localeCompare(b.nextEmiDate || '9999');
+        }
+        return a.name.localeCompare(b.name);
+      });
+  }, [allLoans, statusFilter, typeFilter, lenderFilter, searchQuery, sortBy]);
 
   return (
-    <div className="w-full text-slate-200">
-      {/* Top Search & Filter Bar */}
-      <div className="flex flex-col gap-4 mb-6">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex-1 min-w-[280px]">
+    <div className="space-y-6 max-w-7xl mx-auto">
+      {/* Header and Add Action */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">
+            My Loans
+          </h2>
+          <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
+            Manage your personal loans, mortgages, vehicle loans, and credit lines.
+          </p>
+        </div>
+
+        <button
+          onClick={onOpenAddLoan}
+          className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-slate-900 dark:bg-white dark:text-slate-900 rounded-lg hover:bg-slate-800 dark:hover:bg-slate-100 transition-colors shadow-sm self-start sm:self-auto"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          <span>Add New Loan</span>
+        </button>
+      </div>
+
+      {/* Controls Bar: Search, Filters & View Toggle */}
+      <div className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl space-y-3">
+        <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+          {/* Search Box */}
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 text-slate-600 dark:text-slate-300 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               placeholder="Search by loan name, bank, account number, or notes..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-[#161c28] border border-slate-700/60 rounded-xl px-4 py-2.5 text-sm text-slate-200 placeholder-slate-400 focus:outline-none focus:border-cyan-500 transition-colors"
+              className="w-full pl-9 pr-4 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-900 dark:focus:ring-white text-slate-900 dark:text-white placeholder:text-slate-600 dark:placeholder:text-slate-400"
             />
           </div>
 
-          <div className="flex items-center gap-3">
+          {/* View Toggles & Sorting */}
+          <div className="flex items-center gap-2">
             <select
               value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-              className="bg-[#161c28] border border-slate-700/60 rounded-xl px-3 py-2 text-sm text-slate-300 focus:outline-none"
+              onChange={(e) => setSortBy(e.target.value as any)}
+              className="text-xs py-2 px-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 focus:outline-none"
             >
               <option value="OUTSTANDING_DESC">Highest Outstanding</option>
-              <option value="EMI_DESC">Highest EMI</option>
-              <option value="DUE_DATE">Due Date</option>
-              <option value="NAME">Name (A-Z)</option>
+              <option value="EMI_DESC">Highest Monthly EMI</option>
+              <option value="DUE_DATE">Nearest Due Date</option>
+              <option value="NAME">Loan Name (A-Z)</option>
             </select>
 
-            {/* View Mode Switcher */}
-            <div className="flex items-center bg-[#161c28] border border-slate-700/60 rounded-xl p-1">
+            <div className="flex items-center border border-slate-200 dark:border-slate-700 rounded-lg p-0.5 bg-slate-50 dark:bg-slate-800">
               <button
                 type="button"
                 onClick={() => handleViewChange('table')}
-                className={`p-1.5 rounded-lg transition-colors ${
-                  viewMode === 'table' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-200'
+                className={`p-1.5 rounded text-xs transition-colors ${
+                  viewMode === 'table'
+                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
+                    : 'text-slate-600 dark:text-slate-300'
                 }`}
                 title="Table View"
               >
-                <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24">
-                  <path d="M4 6h16v2H4zm0 5h16v2H4zm0 5h16v2H4z" />
-                </svg>
+                <ListIcon className="w-3.5 h-3.5" />
               </button>
               <button
                 type="button"
                 onClick={() => handleViewChange('grid')}
-                className={`p-1.5 rounded-lg transition-colors ${
-                  viewMode === 'grid' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-slate-200'
+                className={`p-1.5 rounded text-xs transition-colors ${
+                  viewMode === 'grid'
+                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs'
+                    : 'text-slate-600 dark:text-slate-300'
                 }`}
-                title="Grid View"
+                title="Card Grid View"
               >
-                <svg className="w-5 h-5 fill-current" viewBox="0 0 24 24">
-                  <path d="M4 4h7v7H4zm9 0h7v7h-7zm0 9h7v7h-7zm-9 0h7v7H4z" />
-                </svg>
+                <LayoutGrid className="w-3.5 h-3.5" />
               </button>
             </div>
           </div>
         </div>
 
-        {/* Filter Pills */}
-        <div className="flex flex-wrap items-center gap-2">
-          {(['ALL', 'ACTIVE', 'OVERDUE', 'CLOSED'] as const).map((st) => (
-            <button
-              key={st}
-              type="button"
-              onClick={() => setStatusFilter(st)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                statusFilter === st ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/40' : 'bg-[#161c28] text-slate-400 border border-slate-700/40'
-              }`}
+        {/* Filter Row */}
+        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
+          {/* Status Tabs */}
+          <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-1 rounded-lg">
+            {(['ALL', 'ACTIVE', 'OVERDUE', 'CLOSED'] as const).map((st) => (
+              <button
+                key={st}
+                type="button"
+                onClick={() => setStatusFilter(st)}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
+                  statusFilter === st
+                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs font-semibold'
+                    : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                {st === 'ALL' ? 'All Loans' : st.charAt(0) + st.slice(1).toLowerCase()}
+              </button>
+            ))}
+          </div>
+
+          {/* Lender Dropdown Filter */}
+          {lenders.length > 0 && (
+            <select
+              value={lenderFilter}
+              onChange={(e) => setLenderFilter(e.target.value)}
+              className="py-1 px-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 text-[11px]"
             >
-              {st === 'ALL' ? 'All Loans' : st.charAt(0) + st.slice(1).toLowerCase()}
+              <option value="ALL">All Lenders</option>
+              {lenders.map((l) => (
+                <option key={l} value={l}>
+                  {l}
+                </option>
+              ))}
+            </select>
+          )}
+
+          {/* Loan Type Dropdown Filter */}
+          {loanTypes.length > 0 && (
+            <select
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value)}
+              className="py-1 px-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 text-[11px]"
+            >
+              <option value="ALL">All Types</option>
+              {loanTypes.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          )}
+
+          {(statusFilter !== 'ALL' || typeFilter !== 'ALL' || lenderFilter !== 'ALL' || searchQuery) && (
+            <button
+              type="button"
+              onClick={() => {
+                setStatusFilter('ALL');
+                setTypeFilter('ALL');
+                setLenderFilter('ALL');
+                setSearchQuery('');
+              }}
+              className="text-[11px] text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white ml-auto"
+            >
+              Reset Filters
             </button>
-          ))}
+          )}
         </div>
       </div>
 
-      {/* Main Container */}
-      {viewMode === 'grid' ? (
+      {/* Loans Display (Empty State vs Table vs Grid) */}
+      {filteredLoans.length === 0 ? (
+        <div className="p-12 text-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl">
+          <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+            No matching loans found
+          </p>
+          <p className="text-xs text-slate-600 dark:text-slate-300 mb-4">
+            Try adjusting your search query or active filter settings.
+          </p>
+          <button
+            onClick={onOpenAddLoan}
+            className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 dark:bg-white dark:text-slate-900 rounded-lg hover:bg-slate-800 dark:hover:bg-slate-100 transition-colors"
+          >
+            Add New Loan
+          </button>
+        </div>
+      ) : viewMode === 'table' ? (
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 text-[11px] uppercase tracking-wider text-slate-600 dark:text-slate-300 font-semibold">
+                <tr>
+                  <th className="py-3 px-4">Loan Details</th>
+                  <th className="py-3 px-4">Type & Lender</th>
+                  <th className="py-3 px-4 text-right">Original Amount</th>
+                  <th className="py-3 px-4 text-right">Outstanding</th>
+                  <th className="py-3 px-4 text-right">Monthly EMI</th>
+                  <th className="py-3 px-4 text-center">Progress</th>
+                  <th className="py-3 px-4">Next Due Date</th>
+                  <th className="py-3 px-4 text-center">Status</th>
+                  <th className="py-3 px-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {filteredLoans.map((loan) => {
+                  const progressPct =
+                    loan.originalAmount > 0
+                      ? Math.min(100, Math.round(((loan.originalAmount - loan.outstandingPrincipal) / loan.originalAmount) * 100))
+                      : 0;
+                  return (
+                    <tr
+                      key={loan.id}
+                      onClick={() => onSelectLoan(loan.id)}
+                      className="hover:bg-slate-50/70 dark:hover:bg-slate-800/30 cursor-pointer"
+                    >
+                      <td className="py-3.5 px-4 font-medium text-slate-900 dark:text-white max-w-[200px]">
+                        <div className="truncate font-semibold">{loan.name}</div>
+                        <div className="text-[11px] text-slate-600 dark:text-slate-300 font-mono">
+                          {loan.accountNumber || 'No ref #'}
+                        </div>
+                      </td>
+                      <td className="py-3.5 px-4 text-slate-700 dark:text-slate-300">
+                        <div>{loan.loanType}</div>
+                        <div className="text-[11px] text-slate-600 dark:text-slate-300">{loan.lender}</div>
+                      </td>
+                      <td className="py-3.5 px-4 text-right font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                        {formatCurrency(loan.originalAmount, settings.currencySymbol, settings.currency)}
+                      </td>
+                      <td className="py-3.5 px-4 text-right font-mono tabular-nums font-semibold text-slate-900 dark:text-white">
+                        {formatCurrency(loan.outstandingPrincipal, settings.currencySymbol, settings.currency)}
+                      </td>
+                      <td className="py-3.5 px-4 text-right font-mono tabular-nums font-semibold text-slate-900 dark:text-white">
+                        {formatCurrency(loan.emiAmount, settings.currencySymbol, settings.currency)}
+                        <span className="block text-[10px] text-slate-600 dark:text-slate-300 font-normal">
+                          {loan.interestRate}% {loan.interestType === 'REDUCING_BALANCE' ? 'red.' : 'flat'}
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-4 text-center">
+                        <div className="flex items-center justify-center gap-1.5 font-mono text-[11px] text-slate-600 dark:text-slate-300">
+                          <span>{progressPct}%</span>
+                        </div>
+                        <div className="w-16 mx-auto bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden mt-1">
+                          <div
+                            className="bg-emerald-500 h-full rounded-full"
+                            style={{ width: `${progressPct}%` }}
+                          />
+                        </div>
+                      </td>
+                      <td className="py-3.5 px-4 font-mono text-slate-700 dark:text-slate-300">
+                        {loan.nextEmiDate ? formatDate(loan.nextEmiDate, settings.dateFormat) : '—'}
+                      </td>
+                      <td className="py-3.5 px-4 text-center">
+                        <span
+                          className={`inline-block text-[10px] font-mono font-semibold ${
+                            loan.status === 'OVERDUE'
+                              ? 'text-rose-600 dark:text-rose-400'
+                              : loan.status === 'CLOSED'
+                              ? 'text-slate-600 dark:text-slate-300'
+                              : 'text-emerald-700 dark:text-emerald-400'
+                          }`}
+                        >
+                          {loan.status}
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-4 text-right" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-end gap-1.5">
+                          {loan.status !== 'CLOSED' && (
+                            <button
+                              type="button"
+                              onClick={() => onQuickPay(loan.id)}
+                              className="px-2.5 py-1 text-[11px] font-medium text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 rounded hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                            >
+                              Pay
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => onSelectLoan(loan.id)}
+                            className="px-2.5 py-1 text-[11px] font-semibold text-slate-900 dark:text-white hover:underline"
+                          >
+                            Details
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        /* Grid Card View */
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {sortedLoans.map((loan: any, idx: number) => {
-            const loanId = loan.id || loan._id || `loan-${idx}`;
-            const name = loan.name || loan.loanName || 'Loan';
-            const lender = loan.lender || loan.bankName || '';
-            const type = loan.type || loan.loanType || '';
-            const status = (loan.status || 'ACTIVE').toUpperCase();
-            const outstanding = Number(loan.outstanding ?? loan.currentOutstanding ?? 0);
-            const monthlyEmi = Number(loan.monthlyEmi ?? loan.emiAmount ?? 0);
-            const paid = Number(loan.paidTenure ?? loan.paidEmis ?? 0);
-            const total = Number(loan.totalTenure ?? loan.tenureMonths ?? 0);
-            const progress = total > 0 ? Math.min(100, Math.round((paid / total) * 100)) : 0;
-            const due = loan.nextDueDate || 'N/A';
+          {filteredLoans.map((loan) => {
+            const isOverdue = loan.status === 'OVERDUE';
+            const isClosed = loan.status === 'CLOSED';
+            const progressPct =
+              loan.originalAmount > 0
+                ? Math.min(100, Math.round(((loan.originalAmount - loan.outstandingPrincipal) / loan.originalAmount) * 100))
+                : 0;
 
             return (
               <div
-                key={loanId}
-                onClick={() => onSelectLoan(loanId)}
-                className="bg-[#121824] border border-slate-800 rounded-2xl p-5 hover:border-slate-700 transition-all cursor-pointer shadow-lg flex flex-col justify-between"
+                key={loan.id}
+                onClick={() => onSelectLoan(loan.id)}
+                className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl hover:border-slate-300 dark:hover:border-slate-700 hover:shadow-md cursor-pointer flex flex-col justify-between"
               >
                 <div>
-                  <div className="flex items-start justify-between">
+                  <div className="flex items-start justify-between gap-2 mb-2">
                     <div>
-                      <h3 className="font-semibold text-white text-base">{name}</h3>
-                      <p className="text-xs text-slate-400 mt-0.5">{lender} • {type}</p>
+                      <h3 className="text-sm font-semibold text-slate-900 dark:text-white line-clamp-1">
+                        {loan.name}
+                      </h3>
+                      <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
+                        {loan.lender} · {loan.loanType}
+                      </p>
                     </div>
-                    <span className="text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20">
-                      {status}
+                    <span
+                      className={`text-[10px] font-mono font-semibold ${
+                        isOverdue
+                          ? 'text-rose-600 dark:text-rose-400'
+                          : isClosed
+                          ? 'text-slate-600 dark:text-slate-300'
+                          : 'text-emerald-700 dark:text-emerald-400'
+                      }`}
+                    >
+                      {loan.status}
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4 my-5">
+                  {/* Financial Breakdown */}
+                  <div className="grid grid-cols-2 gap-2 my-3 p-2.5 bg-slate-50 dark:bg-slate-800/40 rounded-lg text-xs">
                     <div>
-                      <p className="text-[11px] tracking-wider text-slate-400 font-medium">OUTSTANDING</p>
-                      <p className="text-lg font-bold text-white mt-0.5">₹{outstanding.toLocaleString('en-IN')}</p>
+                      <div className="text-[10px] text-slate-600 dark:text-slate-300 uppercase tracking-wider">
+                        Outstanding
+                      </div>
+                      <div className="font-mono font-semibold text-slate-900 dark:text-white tabular-nums">
+                        {formatCurrency(loan.outstandingPrincipal, settings.currencySymbol, settings.currency)}
+                      </div>
                     </div>
                     <div>
-                      <p className="text-[11px] tracking-wider text-slate-400 font-medium">MONTHLY EMI</p>
-                      <p className="text-lg font-bold text-white mt-0.5">₹{monthlyEmi.toLocaleString('en-IN')}</p>
+                      <div className="text-[10px] text-slate-600 dark:text-slate-300 uppercase tracking-wider">
+                        Monthly EMI
+                      </div>
+                      <div className="font-mono font-semibold text-slate-900 dark:text-white tabular-nums">
+                        {formatCurrency(loan.emiAmount, settings.currencySymbol, settings.currency)}
+                      </div>
                     </div>
                   </div>
 
-                  <div className="space-y-1.5 mb-5">
-                    <div className="flex justify-between text-xs text-slate-400">
-                      <span>{paid} paid / {total} total</span>
-                      <span>{progress}%</span>
+                  {/* Repayment Progress bar */}
+                  <div className="space-y-1 mb-3">
+                    <div className="flex items-center justify-between text-[11px] text-slate-600 dark:text-slate-300 font-mono">
+                      <span>{loan.emisPaid} paid / {loan.totalEmis} total</span>
+                      <span>{progressPct}%</span>
                     </div>
-                    <div className="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                      <div className="bg-cyan-500 h-full rounded-full transition-all duration-300" style={{ width: `${progress}%` }} />
+                    <div className="w-full bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                      <div
+                        className="bg-emerald-500 h-full rounded-full"
+                        style={{ width: `${progressPct}%` }}
+                      />
                     </div>
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between pt-3 border-t border-slate-800/80">
-                  <span className="text-xs text-slate-400">Due: {due}</span>
-                  <div className="flex items-center gap-2">
-                    {onQuickPay && (
+                {/* Footer details & quick action */}
+                <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs">
+                  <div className="text-slate-600 dark:text-slate-300 font-mono text-[11px]">
+                    {loan.nextEmiDate ? (
+                      <>Due: {formatDate(loan.nextEmiDate, settings.dateFormat)}</>
+                    ) : (
+                      <>Paid in full</>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                    {!isClosed && (
                       <button
                         type="button"
-                        onClick={(e) => {
-                          e.stopPropagation(); // Fix 2: Card click ko double trigger hone se bachaye
-                          onQuickPay(loanId);
-                        }}
-                        className="text-xs font-medium text-cyan-400 hover:text-cyan-300 px-2 py-1 rounded"
+                        onClick={() => onQuickPay(loan.id)}
+                        className="px-2.5 py-1 text-[11px] font-medium text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 rounded hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                       >
                         Pay
                       </button>
                     )}
                     <button
                       type="button"
-                      onClick={(e) => {
-                        e.stopPropagation(); // Fix 2: Blinking and double trigger fix
-                        onSelectLoan(loanId);
-                      }}
-                      className="text-xs font-medium text-slate-300 hover:text-white px-2 py-1 rounded flex items-center gap-0.5"
+                      onClick={() => onSelectLoan(loan.id)}
+                      className="text-xs font-semibold text-slate-900 dark:text-white hover:underline flex items-center gap-0.5"
                     >
-                      Manage &gt;
+                      <span>Manage</span>
+                      <ChevronRight className="w-3 h-3" />
                     </button>
                   </div>
                 </div>
@@ -285,72 +507,7 @@ export const LoansListView: React.FC<LoansListViewProps> = ({
             );
           })}
         </div>
-      ) : (
-        <div className="bg-[#121824] border border-slate-800 rounded-2xl overflow-x-auto shadow-lg">
-          <table className="w-full text-left text-sm text-slate-300">
-            <thead className="bg-[#161c28] text-xs text-slate-400 uppercase tracking-wider border-b border-slate-800">
-              <tr>
-                <th className="py-3 px-4">Loan / Lender</th>
-                <th className="py-3 px-4">Type</th>
-                <th className="py-3 px-4">Outstanding</th>
-                <th className="py-3 px-4">Monthly EMI</th>
-                <th className="py-3 px-4">Progress</th>
-                <th className="py-3 px-4">Status</th>
-                <th className="py-3 px-4 text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800">
-              {sortedLoans.map((loan: any, idx: number) => {
-                const loanId = loan.id || loan._id || `loan-${idx}`;
-                const name = loan.name || loan.loanName || 'Loan';
-                const lender = loan.lender || loan.bankName || '';
-                const type = loan.type || loan.loanType || '';
-                const status = (loan.status || 'ACTIVE').toUpperCase();
-                const outstanding = Number(loan.outstanding ?? loan.currentOutstanding ?? 0);
-                const monthlyEmi = Number(loan.monthlyEmi ?? loan.emiAmount ?? 0);
-                const paid = Number(loan.paidTenure ?? loan.paidEmis ?? 0);
-                const total = Number(loan.totalTenure ?? loan.tenureMonths ?? 0);
-
-                return (
-                  <tr
-                    key={loanId}
-                    onClick={() => onSelectLoan(loanId)}
-                    className="hover:bg-slate-800/40 cursor-pointer transition-colors"
-                  >
-                    <td className="py-3.5 px-4">
-                      <div className="font-semibold text-white">{name}</div>
-                      <div className="text-xs text-slate-400">{lender}</div>
-                    </td>
-                    <td className="py-3.5 px-4 text-xs">{type}</td>
-                    <td className="py-3.5 px-4 font-semibold text-white">₹{outstanding.toLocaleString('en-IN')}</td>
-                    <td className="py-3.5 px-4 font-semibold text-white">₹{monthlyEmi.toLocaleString('en-IN')}</td>
-                    <td className="py-3.5 px-4 text-xs">{paid} / {total} paid</td>
-                    <td className="py-3.5 px-4">
-                      <span className="text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
-                        {status}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-4 text-right">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onSelectLoan(loanId);
-                        }}
-                        className="text-xs text-cyan-400 hover:underline"
-                      >
-                        Manage
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
       )}
     </div>
   );
 };
-
-export default LoansListView;
