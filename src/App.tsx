@@ -1,575 +1,299 @@
-import React, { useState, useEffect } from 'react';
-import { Navbar } from './components/layout/Navbar';
-import { Sidebar } from './components/layout/Sidebar';
-import { DashboardView } from './components/dashboard/DashboardView';
-import { LoansListView } from './components/loans/LoansListView';
-import { LoanDetailView } from './components/loans/LoanDetailView';
-import { AddEditLoanModal } from './components/loans/AddEditLoanModal';
-import { RecordPaymentModal } from './components/payments/RecordPaymentModal';
-import { PrepaymentModal } from './components/payments/PrepaymentModal';
-import { EMICalendarView } from './components/calendar/EMICalendarView';
-import { UpcomingEMIsView } from './components/upcoming/UpcomingEMIsView';
-import { OverdueManagementView } from './components/overdue/OverdueManagementView';
-import { MonthlyFinancialView } from './components/monthly/MonthlyFinancialView';
-import { ReportsAnalyticsView } from './components/reports/ReportsAnalyticsView';
-import { AuditLogView } from './components/audit/AuditLogView';
-import { BackupSettingsView } from './components/settings/BackupSettingsView';
-import { LoanStatementModal } from './components/statement/LoanStatementModal';
-import { LockScreen } from './components/security/LockScreen';
-import { UserProfileView } from './components/profile/UserProfileView';
-import { AuthModal } from './components/auth/AuthModal';
-import { AdminPanelView } from './components/admin/AdminPanelView';
-import { DepositsListView } from './components/deposits/DepositsListView';
-import { DepositDetailView } from './components/deposits/DepositDetailView';
-import { AddEditDepositModal } from './components/deposits/AddEditDepositModal';
-import { RecordDepositPaymentModal } from './components/deposits/RecordDepositPaymentModal';
-import { storageService, MASTER_USER } from './services/storage';
-import { Loan, UserSettings, AuthUser } from './types/loan';
-import { Deposit } from './types/deposit';
+import React, { useState, useMemo } from 'react';
+import { CheckCircle2, PiggyBank, Wallet } from 'lucide-react';
+import { UserSettings } from '../../types/loan';
+import { storageService, CURRENT_DATE_STR } from '../../services/storage';
+import { formatCurrency, formatDate, getDaysDifference, getRelativeDueDateText } from '../../utils/formatters';
 
-export default function App() {
-  const [refreshTrigger, setRefreshTrigger] = useState(0);
-  const [activeView, setActiveView] = useState<string>('dashboard');
-  const [selectedLoanId, setSelectedLoanId] = useState<string | null>(null);
-  const [selectedDepositId, setSelectedDepositId] = useState<string | null>(null);
+interface UpcomingEMIsViewProps {
+  settings?: UserSettings;
+  onQuickPay: (loanId: string, emiPaymentNo?: number) => void;
+  onSelectLoan: (loanId: string) => void;
+  onSelectDeposit?: (depositId: string) => void;
+}
 
-  // Active Multi-User Session (Null by default for guest/unauthenticated visitors)
-  const [currentUser, setCurrentUser] = useState<AuthUser | null>(() => storageService.getCurrentUser());
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+export const UpcomingEMIsView: React.FC<UpcomingEMIsViewProps> = ({
+  settings,
+  onQuickPay,
+  onSelectLoan,
+  onSelectDeposit,
+}) => {
+  const [filterPeriod, setFilterPeriod] = useState<'ALL' | 'TODAY' | 'NEXT_7_DAYS' | 'NEXT_30_DAYS' | 'THIS_MONTH'>('ALL');
+  const [categoryFilter, setCategoryFilter] = useState<'ALL' | 'LOAN_EMI' | 'DEPOSIT_CONTRIBUTION'>('ALL');
 
-  // Master Admin Troubleshooting Mode State
-  const [troubleshootUser, setTroubleshootUser] = useState<AuthUser | null>(() =>
-    storageService.getImpersonatedUser()
-  );
+  const currencySymbol = settings?.currencySymbol || '₹';
+  const currency = settings?.currency || 'INR';
+  const dateFormat = settings?.dateFormat || 'DD/MM/YYYY';
 
-  // Settings
-  const [settings, setSettings] = useState<UserSettings>(() => storageService.getSettings());
-
-  // Security App Lock State
-  const [isAppLocked, setIsAppLocked] = useState(() => {
-    const currentPin = settings.securityPin || storageService.getSecurityPin();
-    const isLockEnabled = settings.isAppLockEnabled;
-
-    if (isLockEnabled && currentPin) {
-      const isSessionUnlocked =
-        typeof sessionStorage !== 'undefined' &&
-        sessionStorage.getItem('debttrack_session_unlocked') === 'true';
-      return !isSessionUnlocked;
+  const rawList: any[] = useMemo(() => {
+    try {
+      const anyStorage = storageService as any;
+      if (anyStorage && typeof anyStorage.getUnifiedUpcomingPayments === 'function') {
+        return anyStorage.getUnifiedUpcomingPayments() || [];
+      }
+      if (anyStorage && typeof anyStorage.getLoans === 'function') {
+        const loans: any[] = anyStorage.getLoans(false) || [];
+        return loans
+          .filter((l: any) => l && l.status === 'ACTIVE' && l.nextEmiDate)
+          .map((l: any, index: number) => ({
+            id: `loan-emi-${l.id}-${index}`,
+            category: 'LOAN_EMI',
+            sourceId: l.id,
+            name: l.name,
+            entityName: l.lender,
+            itemType: l.loanType,
+            accountNumber: l.accountNumber,
+            paymentNo: (l.emisPaid || 0) + 1,
+            dueDate: l.nextEmiDate,
+            amount: l.emiAmount,
+            remainingAmount: l.emiAmount,
+            daysRemaining: getDaysDifference(l.nextEmiDate, CURRENT_DATE_STR || new Date().toISOString().slice(0, 10)),
+          }));
+      }
+      return [];
+    } catch {
+      return [];
     }
-    return false;
-  });
-
-  // Modal States
-  const [isAddLoanOpen, setIsAddLoanOpen] = useState(false);
-  const [editingLoan, setEditingLoan] = useState<Loan | null>(null);
-
-  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
-  const [paymentTargetLoanId, setPaymentTargetLoanId] = useState<string | null>(null);
-  const [paymentTargetEmiNo, setPaymentTargetEmiNo] = useState<number | undefined>(undefined);
-
-  const [isPrepaymentModalOpen, setIsPrepaymentModalOpen] = useState(false);
-  const [prepaymentLoanId, setPrepaymentLoanId] = useState<string | null>(null);
-
-  const [isStatementModalOpen, setIsStatementModalOpen] = useState(false);
-  const [statementLoanId, setStatementLoanId] = useState<string | null>(null);
-
-  // Deposit Modal States
-  const [isAddDepositOpen, setIsAddDepositOpen] = useState(false);
-  const [editingDeposit, setEditingDeposit] = useState<Deposit | null>(null);
-  const [isDepositPaymentModalOpen, setIsDepositPaymentModalOpen] = useState(false);
-  const [depositPaymentTargetId, setDepositPaymentTargetId] = useState<string | null>(null);
-  const [depositPaymentTargetInstNo, setDepositPaymentTargetInstNo] = useState<number | undefined>(undefined);
-
-  // Cross-tab and Studio-to-web real-time backend synchronization
-  useEffect(() => {
-    // Immediate pull on load
-    storageService.pullFromServer().then(() => {
-      triggerRefresh();
-    });
-
-    // Sync whenever user focuses the tab or window
-    const handleFocus = () => {
-      storageService.pullFromServer().then((hasUpdate) => {
-        if (hasUpdate) triggerRefresh();
-      });
-    };
-    window.addEventListener('focus', handleFocus);
-
-    // Sync on visibility change (crucial for mobile devices resuming from background)
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        storageService.pullFromServer().then((hasUpdate) => {
-          if (hasUpdate) triggerRefresh();
-        });
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibility);
-
-    // Listen to localStorage events from other tabs
-    const handleStorageEvent = (e: StorageEvent) => {
-      if (e.key && e.key.startsWith('debttrack_')) {
-        triggerRefresh();
-      }
-    };
-    window.addEventListener('storage', handleStorageEvent);
-
-    // Background sync polling every 2.5 seconds to keep Studio and Web tabs synchronized
-    const timer = setInterval(() => {
-      storageService.pullFromServer().then((hasUpdate) => {
-        if (hasUpdate) triggerRefresh();
-      });
-    }, 2500);
-
-    return () => {
-      window.removeEventListener('focus', handleFocus);
-      document.removeEventListener('visibilitychange', handleVisibility);
-      window.removeEventListener('storage', handleStorageEvent);
-      clearInterval(timer);
-    };
   }, []);
 
-  // Sync dark mode class
-  useEffect(() => {
-    if (settings.isDarkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  }, [settings.isDarkMode]);
+  const currentYearMonth = (CURRENT_DATE_STR || new Date().toISOString().slice(0, 10)).substring(0, 7);
 
-  // Re-lock when app goes to background if autoLockOnBackground is enabled
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (
-        document.visibilityState === 'hidden' &&
-        settings.isAppLockEnabled &&
-        settings.autoLockOnBackground
-      ) {
-        if (typeof sessionStorage !== 'undefined') {
-          sessionStorage.removeItem('debttrack_session_unlocked');
-        }
-        setIsAppLocked(true);
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [settings.isAppLockEnabled, settings.autoLockOnBackground]);
+  const upcomingList = useMemo(() => {
+    return rawList.filter((item: any) => {
+      if (!item) return false;
+      if (categoryFilter === 'LOAN_EMI' && item.category !== 'LOAN_EMI') return false;
+      if (categoryFilter === 'DEPOSIT_CONTRIBUTION' && item.category === 'LOAN_EMI') return false;
 
-  const triggerRefresh = () => {
-    setRefreshTrigger((prev) => prev + 1);
-  };
+      const diff = Number(item.daysRemaining ?? 0);
+      const dueDate = String(item.dueDate || '');
+      const itemYearMonth = dueDate.length >= 7 ? dueDate.substring(0, 7) : '';
 
-  const handleNavigate = (view: string) => {
-    setActiveView(view);
-    if (view !== 'loan-detail') {
-      setSelectedLoanId(null);
-    }
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+      if (filterPeriod === 'TODAY' && diff !== 0) return false;
+      if (filterPeriod === 'NEXT_7_DAYS' && (diff < 0 || diff > 7)) return false;
+      if (filterPeriod === 'NEXT_30_DAYS' && (diff < 0 || diff > 30)) return false;
+      if (filterPeriod === 'THIS_MONTH' && itemYearMonth !== currentYearMonth) return false;
 
-  const handleSelectLoan = (loanId: string) => {
-    setSelectedLoanId(loanId);
-    setActiveView('loan-detail');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+      return true;
+    });
+  }, [rawList, categoryFilter, filterPeriod, currentYearMonth]);
 
-  const handleInspectUser = (user: AuthUser) => {
-    storageService.setImpersonatedUser(user);
-    setTroubleshootUser(user);
-    setActiveView('dashboard');
-    triggerRefresh();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  const totalUpcomingSum = upcomingList.reduce(
+    (sum: number, item: any) => sum + (Number(item.remainingAmount) || Number(item.amount) || 0),
+    0
+  );
 
-  const handleExitTroubleshoot = () => {
-    storageService.setImpersonatedUser(null);
-    setTroubleshootUser(null);
-    setActiveView('admin');
-    triggerRefresh();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  const totalLoansSum = upcomingList
+    .filter((i: any) => i.category === 'LOAN_EMI')
+    .reduce((sum: number, item: any) => sum + (Number(item.remainingAmount) || Number(item.amount) || 0), 0);
 
-  const handleOpenAddLoan = () => {
-    if (troubleshootUser) {
-      alert(`Troubleshoot Mode (Read-Only): Cannot create new loans while inspecting ${troubleshootUser.name}'s account.`);
-      return;
-    }
-    setEditingLoan(null);
-    setIsAddLoanOpen(true);
-  };
-
-  const handleOpenEditLoan = (loan: Loan) => {
-    if (troubleshootUser) {
-      alert(`Troubleshoot Mode (Read-Only): Cannot modify loans while inspecting ${troubleshootUser.name}'s account.`);
-      return;
-    }
-    setEditingLoan(loan);
-    setIsAddLoanOpen(true);
-  };
-
-  const handleQuickPay = (loanId: string, emiPaymentNo?: number) => {
-    if (troubleshootUser) {
-      alert(`Troubleshoot Mode (Read-Only): Cannot record payments while inspecting ${troubleshootUser.name}'s account.`);
-      return;
-    }
-    setPaymentTargetLoanId(loanId);
-    setPaymentTargetEmiNo(emiPaymentNo);
-    setIsPaymentModalOpen(true);
-  };
-
-  const handleOpenPrepayment = (loanId: string) => {
-    if (troubleshootUser) {
-      alert(`Troubleshoot Mode (Read-Only): Cannot record prepayments while inspecting ${troubleshootUser.name}'s account.`);
-      return;
-    }
-    setPrepaymentLoanId(loanId);
-    setIsPrepaymentModalOpen(true);
-  };
-
-  const handleOpenStatement = (loanId: string) => {
-    setStatementLoanId(loanId);
-    setIsStatementModalOpen(true);
-  };
-
-  const handleLoadDemoData = () => {
-    storageService.loadDemoData();
-    triggerRefresh();
-  };
-
-  const handleClearDemoData = () => {
-    storageService.clearDemoData();
-    if (activeView === 'loan-detail') {
-      setActiveView('loans');
-    }
-    triggerRefresh();
-  };
-
-  const handleSelectDeposit = (depositId: string) => {
-    setSelectedDepositId(depositId);
-    setActiveView('deposit-detail');
-  };
-
-  const handleOpenAddDeposit = () => {
-    setEditingDeposit(null);
-    setIsAddDepositOpen(true);
-  };
-
-  const handleOpenEditDeposit = (deposit: Deposit) => {
-    setEditingDeposit(deposit);
-    setIsAddDepositOpen(true);
-  };
-
-  const handleRecordDepositContribution = (depositId: string, installmentNo?: number) => {
-    setDepositPaymentTargetId(depositId);
-    setDepositPaymentTargetInstNo(installmentNo);
-    setIsDepositPaymentModalOpen(true);
-  };
+  const totalDepositsSum = upcomingList
+    .filter((i: any) => i.category !== 'LOAN_EMI')
+    .reduce((sum: number, item: any) => sum + (Number(item.remainingAmount) || Number(item.amount) || 0), 0);
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col antialiased selection:bg-slate-200 dark:selection:bg-slate-800">
-      {/* Persistent Troubleshoot Mode Top Alert Banner */}
-      {troubleshootUser && (
-        <div className="bg-amber-500 text-slate-950 px-4 py-2.5 text-xs font-semibold flex flex-wrap items-center justify-between gap-3 shadow-md z-50 sticky top-0 border-b border-amber-600 animate-in fade-in">
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-2.5 w-2.5 relative">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-slate-950 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-slate-950"></span>
-            </span>
-            <span>
-              Viewing as <strong>{troubleshootUser.name}</strong> ({troubleshootUser.email}) (Troubleshoot Mode)
-            </span>
-          </div>
-          <button
-            onClick={handleExitTroubleshoot}
-            className="px-3 py-1 bg-slate-950 text-white rounded-lg hover:bg-slate-900 transition-colors text-xs font-bold shrink-0 shadow-xs active:scale-95"
-          >
-            Exit to Master Admin
-          </button>
+    <div className="space-y-6 max-w-7xl mx-auto pb-12">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">
+            Upcoming Payments & Contributions
+          </h1>
+          <p className="text-xs text-slate-600 dark:text-slate-300 mt-1">
+            Aggregated upcoming obligations: Loan EMIs and Deposit Contributions
+          </p>
         </div>
-      )}
 
-      {/* Top Bar Contract compliant Navigation */}
-      <Navbar
-        settings={settings}
-        onUpdateSettings={(newSettings) => {
-          setSettings(newSettings);
-          storageService.saveSettings(newSettings);
-        }}
-        onOpenAddLoan={handleOpenAddLoan}
-        onNavigate={handleNavigate}
-        activeView={activeView}
-        refreshTrigger={refreshTrigger}
-        onRefreshAll={triggerRefresh}
-        onOpenAuthModal={() => setIsAuthModalOpen(true)}
-      />
-
-      {/* Main Workspace Frame */}
-      <div className="flex-1 flex max-w-7xl w-full mx-auto">
-        {/* Desktop Sidebar */}
-        <Sidebar
-          activeView={activeView}
-          onNavigate={handleNavigate}
-          refreshTrigger={refreshTrigger}
-        />
-
-        {/* Dynamic Viewport Content */}
-        <main className="flex-1 p-4 md:p-8 pb-24 lg:pb-12 overflow-y-auto">
-          {activeView === 'dashboard' && (
-            <DashboardView
-              key={`dashboard_${refreshTrigger}`}
-              settings={settings}
-              onNavigate={handleNavigate}
-              onOpenAddLoan={handleOpenAddLoan}
-              onSelectLoan={handleSelectLoan}
-              onQuickPay={handleQuickPay}
-              onLoadDemoData={handleLoadDemoData}
-              refreshTrigger={refreshTrigger}
-            />
-          )}
-
-          {activeView === 'loans' && (
-            <LoansListView
-              key={`loans_${refreshTrigger}`}
-              settings={settings}
-              onOpenAddLoan={handleOpenAddLoan}
-              onSelectLoan={handleSelectLoan}
-              onQuickPay={handleQuickPay}
-            />
-          )}
-
-          {activeView === 'loan-detail' && selectedLoanId && (
-            <LoanDetailView
-              loanId={selectedLoanId}
-              settings={settings}
-              onBack={() => setActiveView('loans')}
-              onEditLoan={handleOpenEditLoan}
-              onRecordPayment={handleQuickPay}
-              onPrepayment={handleOpenPrepayment}
-              onOpenStatement={handleOpenStatement}
-              refreshTrigger={refreshTrigger}
-            />
-          )}
-
-          {activeView === 'deposits' && (
-            <DepositsListView
-              key={`deposits_${refreshTrigger}`}
-              settings={settings}
-              onOpenAddDeposit={handleOpenAddDeposit}
-              onSelectDeposit={handleSelectDeposit}
-              onEditDeposit={handleOpenEditDeposit}
-              onRecordContribution={handleRecordDepositContribution}
-              refreshTrigger={refreshTrigger}
-            />
-          )}
-
-          {activeView === 'deposit-detail' && selectedDepositId && (
-            <DepositDetailView
-              key={`deposit_detail_${selectedDepositId}_${refreshTrigger}`}
-              depositId={selectedDepositId}
-              settings={settings}
-              onBack={() => setActiveView('deposits')}
-              onEditDeposit={handleOpenEditDeposit}
-              onRecordContribution={handleRecordDepositContribution}
-              refreshTrigger={refreshTrigger}
-            />
-          )}
-
-          {activeView === 'upcoming' && (
-            <UpcomingEMIsView
-              key={`upcoming_${refreshTrigger}`}
-              settings={settings}
-              onQuickPay={handleQuickPay}
-              onSelectLoan={handleSelectLoan}
-            />
-          )}
-
-          {activeView === 'calendar' && (
-            <EMICalendarView
-              key={`calendar_${refreshTrigger}`}
-              settings={settings}
-              onQuickPay={handleQuickPay}
-              onSelectLoan={handleSelectLoan}
-            />
-          )}
-
-          {activeView === 'overdue' && (
-            <OverdueManagementView
-              key={`overdue_${refreshTrigger}`}
-              settings={settings}
-              onQuickPay={handleQuickPay}
-              onSelectLoan={handleSelectLoan}
-            />
-          )}
-
-          {activeView === 'monthly' && (
-            <MonthlyFinancialView settings={settings} />
-          )}
-
-          {activeView === 'reports' && (
-            <ReportsAnalyticsView settings={settings} />
-          )}
-
-          {activeView === 'audit' && (
-            <AuditLogView />
-          )}
-
-          {activeView === 'profile' && (
-            <UserProfileView
-              settings={settings}
-              onUpdateSettings={(newSettings) => {
-                setSettings(newSettings);
-                storageService.saveSettings(newSettings);
-              }}
-              onNavigate={handleNavigate}
-              onLockApp={() => {
-                if (typeof sessionStorage !== 'undefined') {
-                  sessionStorage.removeItem('debttrack_session_unlocked');
-                }
-                setIsAppLocked(true);
-              }}
-              onOpenAuthModal={() => setIsAuthModalOpen(true)}
-            />
-          )}
-
-          {activeView === 'admin' && storageService.isMasterAdmin() && (
-            <AdminPanelView
-              onInspectUser={handleInspectUser}
-              onNavigate={handleNavigate}
-            />
-          )}
-
-          {activeView === 'settings' && (
-            <BackupSettingsView
-              settings={settings}
-              onUpdateSettings={(newSettings) => {
-                setSettings(newSettings);
-                storageService.saveSettings(newSettings);
-              }}
-              onLoadDemoData={handleLoadDemoData}
-              onClearDemoData={handleClearDemoData}
-              onRefreshAll={triggerRefresh}
-              onNavigate={handleNavigate}
-            />
-          )}
-        </main>
+        <div className="flex items-center gap-3 self-start sm:self-auto">
+          <div className="p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-right">
+            <div className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+              Total Due ({upcomingList.length})
+            </div>
+            <div className="text-lg font-bold font-mono text-slate-900 dark:text-white">
+              {formatCurrency(totalUpcomingSum, currencySymbol, currency)}
+            </div>
+            <div className="text-[10px] text-slate-500">
+              Loan: {formatCurrency(totalLoansSum, currencySymbol, currency)} | Dep: {formatCurrency(totalDepositsSum, currencySymbol, currency)}
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Add / Edit Loan Modal */}
-      <AddEditLoanModal
-        initialLoan={editingLoan}
-        settings={settings}
-        isOpen={isAddLoanOpen}
-        onClose={() => {
-          setIsAddLoanOpen(false);
-          setEditingLoan(null);
-        }}
-        onSuccess={(loanId) => {
-          triggerRefresh();
-          handleSelectLoan(loanId);
-        }}
-      />
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-3">
+        <div className="flex items-center gap-1.5 overflow-x-auto">
+          {[
+            { id: 'ALL', label: 'All Commitments' },
+            { id: 'LOAN_EMI', label: 'Loan EMIs' },
+            { id: 'DEPOSIT_CONTRIBUTION', label: 'Deposit Contributions' },
+          ].map((cat) => (
+            <button
+              key={cat.id}
+              type="button"
+              onClick={() => setCategoryFilter(cat.id as any)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap ${
+                categoryFilter === cat.id
+                  ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              {cat.label}
+            </button>
+          ))}
+        </div>
 
-      {/* Record Payment Modal */}
-      <RecordPaymentModal
-        loanId={paymentTargetLoanId}
-        targetPaymentNo={paymentTargetEmiNo}
-        settings={settings}
-        isOpen={isPaymentModalOpen}
-        onClose={() => {
-          setIsPaymentModalOpen(false);
-          setPaymentTargetLoanId(null);
-          setPaymentTargetEmiNo(undefined);
-        }}
-        onSuccess={() => {
-          triggerRefresh();
-        }}
-      />
+        <div className="flex items-center gap-1.5 overflow-x-auto">
+          {[
+            { id: 'ALL', label: 'All' },
+            { id: 'TODAY', label: 'Due Today' },
+            { id: 'NEXT_7_DAYS', label: 'Next 7 Days' },
+            { id: 'NEXT_30_DAYS', label: 'Next 30 Days' },
+            { id: 'THIS_MONTH', label: 'This Month' },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setFilterPeriod(tab.id as any)}
+              className={`px-2.5 py-1 text-xs rounded-lg transition-colors whitespace-nowrap ${
+                filterPeriod === tab.id
+                  ? 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-semibold'
+                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
-      {/* Prepayment & Foreclosure Modal */}
-      {prepaymentLoanId && (
-        <PrepaymentModal
-          loanId={prepaymentLoanId}
-          settings={settings}
-          isOpen={isPrepaymentModalOpen}
-          onClose={() => {
-            setIsPrepaymentModalOpen(false);
-            setPrepaymentLoanId(null);
-          }}
-          onSuccess={() => {
-            triggerRefresh();
-          }}
-        />
-      )}
+      {upcomingList.length === 0 ? (
+        <div className="p-12 text-center bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800">
+          <CheckCircle2 className="w-12 h-12 text-emerald-500 mx-auto mb-3" />
+          <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">
+            No Upcoming Payments Found
+          </h3>
+          <p className="text-xs text-slate-500 mt-1">
+            You are fully up to date or no commitments match the selected range.
+          </p>
+        </div>
+      ) : (
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs divide-y divide-slate-100 dark:divide-slate-800">
+          {upcomingList.map((item: any) => {
+            let rel = { isOverdue: false, isToday: false, text: '' };
+            try {
+              if (item.dueDate) {
+                rel = getRelativeDueDateText(item.dueDate, CURRENT_DATE_STR || new Date().toISOString().slice(0, 10));
+              }
+            } catch {
+              rel = { isOverdue: false, isToday: false, text: item.dueDate || '' };
+            }
 
-      {/* Loan Account Statement Modal */}
-      <LoanStatementModal
-        loanId={statementLoanId}
-        settings={settings}
-        isOpen={isStatementModalOpen}
-        onClose={() => {
-          setIsStatementModalOpen(false);
-          setStatementLoanId(null);
-        }}
-      />
+            const isLoan = item.category === 'LOAN_EMI';
+            const itemAmount = Number(item.amount) || Number(item.remainingAmount) || 0;
 
-      {/* Deposit Modals */}
-      <AddEditDepositModal
-        initialDeposit={editingDeposit}
-        settings={settings}
-        isOpen={isAddDepositOpen}
-        onClose={() => {
-          setIsAddDepositOpen(false);
-          setEditingDeposit(null);
-        }}
-        onSuccess={(depositId) => {
-          triggerRefresh();
-          setSelectedDepositId(depositId);
-          setActiveView('deposit-detail');
-        }}
-      />
+            return (
+              <div
+                key={item.id}
+                className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors"
+              >
+                <div className="flex items-start gap-3 min-w-0">
+                  <div
+                    className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${
+                      isLoan
+                        ? 'bg-blue-50 text-blue-600 dark:bg-blue-950/60 dark:text-blue-400'
+                        : 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400'
+                    }`}
+                  >
+                    {isLoan ? <Wallet className="w-4 h-4" /> : <PiggyBank className="w-4 h-4" />}
+                  </div>
 
-      <RecordDepositPaymentModal
-        depositId={depositPaymentTargetId}
-        targetInstallmentNumber={depositPaymentTargetInstNo}
-        settings={settings}
-        isOpen={isDepositPaymentModalOpen}
-        onClose={() => {
-          setIsDepositPaymentModalOpen(false);
-          setDepositPaymentTargetId(null);
-          setDepositPaymentTargetInstNo(undefined);
-        }}
-        onSuccess={() => {
-          triggerRefresh();
-        }}
-      />
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span
+                        onClick={() => {
+                          if (isLoan) onSelectLoan(item.sourceId);
+                          else onSelectDeposit?.(item.sourceId);
+                        }}
+                        className="font-bold text-sm text-slate-900 dark:text-white hover:underline cursor-pointer truncate"
+                      >
+                        {item.name || 'Untitled Payment'}
+                      </span>
+                      <span
+                        className={`px-2 py-0.5 text-[10px] font-bold rounded-md uppercase tracking-wider ${
+                          isLoan
+                            ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300'
+                            : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                        }`}
+                      >
+                        {isLoan ? `Loan EMI #${item.paymentNo || ''}` : `Contribution #${item.paymentNo || ''}`}
+                      </span>
+                    </div>
 
-      {/* Multi-User Authentication Modal (Mandatory on first visit / unauthenticated) */}
-      <AuthModal
-        isOpen={!currentUser || isAuthModalOpen}
-        onClose={() => {
-          if (currentUser) {
-            setIsAuthModalOpen(false);
-          }
-        }}
-        currentUser={currentUser}
-        onAuthSuccess={(user) => {
-          setCurrentUser(user);
-          setIsAuthModalOpen(false);
-          triggerRefresh();
-        }}
-      />
+                    <div className="text-xs text-slate-500 mt-1 flex flex-wrap items-center gap-2">
+                      <span>{item.entityName || 'N/A'}</span>
+                      <span>·</span>
+                      <span>{item.itemType || 'N/A'}</span>
+                      {item.accountNumber && (
+                        <>
+                          <span>·</span>
+                          <span className="font-mono">{item.accountNumber}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
 
-      {/* App Lock & Security Screen Overlay */}
-      {isAppLocked && (
-        <LockScreen
-          settings={settings}
-          onUnlock={() => setIsAppLocked(false)}
-          onUpdateSettings={(newSettings) => {
-            setSettings(newSettings);
-            storageService.saveSettings(newSettings);
-          }}
-        />
+                <div className="flex items-center justify-between sm:justify-end gap-6 self-stretch sm:self-auto pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100 dark:border-slate-800">
+                  <div className="text-left sm:text-right">
+                    <div className="text-xs text-slate-500">
+                      Due: <span className="font-mono">{item.dueDate ? formatDate(item.dueDate, dateFormat) : '—'}</span>
+                    </div>
+                    <div
+                      className={`text-xs font-mono font-semibold ${
+                        rel?.isOverdue
+                          ? 'text-rose-600 dark:text-rose-400 font-bold'
+                          : rel?.isToday
+                          ? 'text-amber-600 dark:text-amber-400 font-bold'
+                          : 'text-slate-600 dark:text-slate-400'
+                      }`}
+                    >
+                      {rel?.text || ''}
+                    </div>
+                  </div>
+
+                  <div className="text-right">
+                    <div className="text-[11px] text-slate-500">
+                      {isLoan ? 'EMI Amount' : 'Contribution'}
+                    </div>
+                    <div className="text-base font-bold font-mono text-slate-900 dark:text-white tabular-nums">
+                      {formatCurrency(itemAmount, currencySymbol, currency)}
+                    </div>
+                  </div>
+
+                  <div>
+                    {isLoan ? (
+                      <button
+                        type="button"
+                        onClick={() => onQuickPay(item.sourceId, item.paymentNo)}
+                        className="px-3.5 py-1.5 bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-semibold rounded-lg hover:bg-slate-800 dark:hover:bg-slate-100 transition-colors whitespace-nowrap"
+                      >
+                        Pay EMI
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => onSelectDeposit?.(item.sourceId)}
+                        className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap"
+                      >
+                        Record
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );
-}
+};
+
+export { UpcomingEMIsView };
+export default UpcomingEMIsView;
