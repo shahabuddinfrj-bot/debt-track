@@ -5,7 +5,7 @@ import { storageService, CURRENT_DATE_STR } from '../../services/storage';
 import { formatCurrency, formatDate, getDaysDifference, getRelativeDueDateText } from '../../utils/formatters';
 
 interface UpcomingEMIsViewProps {
-  settings: UserSettings;
+  settings?: UserSettings;
   onQuickPay: (loanId: string, emiPaymentNo?: number) => void;
   onSelectLoan: (loanId: string) => void;
   onSelectDeposit?: (depositId: string) => void;
@@ -20,20 +20,61 @@ export const UpcomingEMIsView: React.FC<UpcomingEMIsViewProps> = ({
   const [filterPeriod, setFilterPeriod] = useState<'ALL' | 'TODAY' | 'NEXT_7_DAYS' | 'NEXT_30_DAYS' | 'THIS_MONTH'>('ALL');
   const [categoryFilter, setCategoryFilter] = useState<'ALL' | 'LOAN_EMI' | 'DEPOSIT_CONTRIBUTION'>('ALL');
 
-  // Gather unified upcoming commitments
-  const rawList = storageService.getUnifiedUpcomingPayments();
+  const currencySymbol = settings?.currencySymbol || '₹';
+  const currency = settings?.currency || 'INR';
+  const dateFormat = settings?.dateFormat || 'DD/MM/YYYY';
 
-  const currentYearMonth = CURRENT_DATE_STR.substring(0, 7);
+  // FIX: Agar storageService.getUnifiedUpcomingPayments function na mile toh crash hone se bachaye
+  const rawList: UnifiedUpcomingItem[] = useMemo(() => {
+    try {
+      if (storageService && typeof (storageService as any).getUnifiedUpcomingPayments === 'function') {
+        return (storageService as any).getUnifiedUpcomingPayments() || [];
+      }
+      
+      // Fallback: storageService.getLoans se direct upcoming nikaalein
+      if (storageService && typeof storageService.getLoans === 'function') {
+        const loans = storageService.getLoans(false) || [];
+        return loans
+          .filter((l) => l.status === 'ACTIVE' && l.nextEmiDate)
+          .map((l, index) => {
+            const daysRemaining = getDaysDifference(l.nextEmiDate, CURRENT_DATE_STR || new Date().toISOString().slice(0, 10));
+            return {
+              id: `loan-emi-${l.id}-${index}`,
+              category: 'LOAN_EMI' as const,
+              sourceId: l.id,
+              name: l.name,
+              entityName: l.lender,
+              itemType: l.loanType,
+              accountNumber: l.accountNumber,
+              paymentNo: (l.emisPaid || 0) + 1,
+              dueDate: l.nextEmiDate,
+              amount: l.emiAmount,
+              remainingAmount: l.emiAmount,
+              daysRemaining,
+            };
+          });
+      }
+      return [];
+    } catch (e) {
+      console.error('Error loading upcoming payments:', e);
+      return [];
+    }
+  }, []);
+
+  const currentYearMonth = (CURRENT_DATE_STR || new Date().toISOString().slice(0, 10)).substring(0, 7);
 
   const upcomingList = useMemo(() => {
     return rawList.filter((item) => {
+      if (!item) return false;
+
       // Category filter
       if (categoryFilter === 'LOAN_EMI' && item.category !== 'LOAN_EMI') return false;
       if (categoryFilter === 'DEPOSIT_CONTRIBUTION' && item.category === 'LOAN_EMI') return false;
 
       // Period filter
-      const diff = item.daysRemaining;
-      const itemYearMonth = item.dueDate.substring(0, 7);
+      const diff = Number(item.daysRemaining ?? 0);
+      const dueDate = item.dueDate || '';
+      const itemYearMonth = dueDate.length >= 7 ? dueDate.substring(0, 7) : '';
 
       if (filterPeriod === 'TODAY' && diff !== 0) return false;
       if (filterPeriod === 'NEXT_7_DAYS' && (diff < 0 || diff > 7)) return false;
@@ -45,17 +86,17 @@ export const UpcomingEMIsView: React.FC<UpcomingEMIsViewProps> = ({
   }, [rawList, categoryFilter, filterPeriod, currentYearMonth]);
 
   const totalUpcomingSum = upcomingList.reduce(
-    (sum, item) => sum + item.remainingAmount,
+    (sum, item) => sum + (Number(item.remainingAmount) || Number(item.amount) || 0),
     0
   );
 
   const totalLoansSum = upcomingList
     .filter((i) => i.category === 'LOAN_EMI')
-    .reduce((sum, item) => sum + item.remainingAmount, 0);
+    .reduce((sum, item) => sum + (Number(item.remainingAmount) || Number(item.amount) || 0), 0);
 
   const totalDepositsSum = upcomingList
     .filter((i) => i.category !== 'LOAN_EMI')
-    .reduce((sum, item) => sum + item.remainingAmount, 0);
+    .reduce((sum, item) => sum + (Number(item.remainingAmount) || Number(item.amount) || 0), 0);
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
@@ -77,10 +118,10 @@ export const UpcomingEMIsView: React.FC<UpcomingEMIsViewProps> = ({
               Total Due ({upcomingList.length})
             </div>
             <div className="text-lg font-bold font-mono text-slate-900 dark:text-white">
-              {formatCurrency(totalUpcomingSum, settings.currencySymbol, settings.currency)}
+              {formatCurrency(totalUpcomingSum, currencySymbol, currency)}
             </div>
             <div className="text-[10px] text-slate-500">
-              Loan: {formatCurrency(totalLoansSum, settings.currencySymbol, settings.currency)} | Dep: {formatCurrency(totalDepositsSum, settings.currencySymbol, settings.currency)}
+              Loan: {formatCurrency(totalLoansSum, currencySymbol, currency)} | Dep: {formatCurrency(totalDepositsSum, currencySymbol, currency)}
             </div>
           </div>
         </div>
@@ -147,8 +188,17 @@ export const UpcomingEMIsView: React.FC<UpcomingEMIsViewProps> = ({
       ) : (
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs divide-y divide-slate-100 dark:divide-slate-800">
           {upcomingList.map((item) => {
-            const rel = getRelativeDueDateText(item.dueDate, CURRENT_DATE_STR);
+            let rel = { isOverdue: false, isToday: false, text: '' };
+            try {
+              if (item.dueDate) {
+                rel = getRelativeDueDateText(item.dueDate, CURRENT_DATE_STR || new Date().toISOString().slice(0, 10));
+              }
+            } catch (e) {
+              rel = { isOverdue: false, isToday: false, text: item.dueDate || '' };
+            }
+
             const isLoan = item.category === 'LOAN_EMI';
+            const itemAmount = Number(item.amount) || Number(item.remainingAmount) || 0;
 
             return (
               <div
@@ -175,7 +225,7 @@ export const UpcomingEMIsView: React.FC<UpcomingEMIsViewProps> = ({
                         }}
                         className="font-bold text-sm text-slate-900 dark:text-white hover:underline cursor-pointer truncate"
                       >
-                        {item.name}
+                        {item.name || 'Untitled Payment'}
                       </span>
                       <span
                         className={`px-2 py-0.5 text-[10px] font-bold rounded-md uppercase tracking-wider ${
@@ -184,14 +234,14 @@ export const UpcomingEMIsView: React.FC<UpcomingEMIsViewProps> = ({
                             : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
                         }`}
                       >
-                        {isLoan ? `Loan EMI #${item.paymentNo}` : `Contribution #${item.paymentNo}`}
+                        {isLoan ? `Loan EMI #${item.paymentNo || ''}` : `Contribution #${item.paymentNo || ''}`}
                       </span>
                     </div>
 
                     <div className="text-xs text-slate-500 mt-1 flex flex-wrap items-center gap-2">
-                      <span>{item.entityName}</span>
+                      <span>{item.entityName || 'N/A'}</span>
                       <span>·</span>
-                      <span>{item.itemType}</span>
+                      <span>{item.itemType || 'N/A'}</span>
                       {item.accountNumber && (
                         <>
                           <span>·</span>
@@ -205,18 +255,18 @@ export const UpcomingEMIsView: React.FC<UpcomingEMIsViewProps> = ({
                 <div className="flex items-center justify-between sm:justify-end gap-6 self-stretch sm:self-auto pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100 dark:border-slate-800">
                   <div className="text-left sm:text-right">
                     <div className="text-xs text-slate-500">
-                      Due: <span className="font-mono">{formatDate(item.dueDate, settings.dateFormat)}</span>
+                      Due: <span className="font-mono">{item.dueDate ? formatDate(item.dueDate, dateFormat) : '—'}</span>
                     </div>
                     <div
                       className={`text-xs font-mono font-semibold ${
-                        rel.isOverdue
+                        rel?.isOverdue
                           ? 'text-rose-600 dark:text-rose-400 font-bold'
-                          : rel.isToday
+                          : rel?.isToday
                           ? 'text-amber-600 dark:text-amber-400 font-bold'
                           : 'text-slate-600 dark:text-slate-400'
                       }`}
                     >
-                      {rel.text}
+                      {rel?.text || ''}
                     </div>
                   </div>
 
@@ -225,13 +275,14 @@ export const UpcomingEMIsView: React.FC<UpcomingEMIsViewProps> = ({
                       {isLoan ? 'EMI Amount' : 'Contribution'}
                     </div>
                     <div className="text-base font-bold font-mono text-slate-900 dark:text-white tabular-nums">
-                      {formatCurrency(item.amount, settings.currencySymbol, settings.currency)}
+                      {formatCurrency(itemAmount, currencySymbol, currency)}
                     </div>
                   </div>
 
                   <div>
                     {isLoan ? (
                       <button
+                        type="button"
                         onClick={() => onQuickPay(item.sourceId, item.paymentNo)}
                         className="px-3.5 py-1.5 bg-slate-900 dark:bg-white text-white dark:text-slate-900 text-xs font-semibold rounded-lg hover:bg-slate-800 dark:hover:bg-slate-100 transition-colors whitespace-nowrap"
                       >
@@ -239,6 +290,7 @@ export const UpcomingEMIsView: React.FC<UpcomingEMIsViewProps> = ({
                       </button>
                     ) : (
                       <button
+                        type="button"
                         onClick={() => onSelectDeposit?.(item.sourceId)}
                         className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg transition-colors whitespace-nowrap"
                       >
@@ -255,3 +307,5 @@ export const UpcomingEMIsView: React.FC<UpcomingEMIsViewProps> = ({
     </div>
   );
 };
+
+export default UpcomingEMIsView;
