@@ -135,6 +135,7 @@ class StorageService {
           if (cloudData.documents) this.set(STORAGE_KEYS.DOCUMENTS, cloudData.documents);
           if (cloudData.notes) this.set(STORAGE_KEYS.NOTES, cloudData.notes);
           if (cloudData.settings) this.set(STORAGE_KEYS.SETTINGS, cloudData.settings);
+          if (cloudData.deposits) this.set(STORAGE_KEYS.DEPOSITS, cloudData.deposits);
           return true;
         }
       }
