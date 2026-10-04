@@ -116,7 +116,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <>
-      <header className="sticky top-0 z-40 w-full max-w-full border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md">
+      <header className="sticky top-0 pt-9 z-40 w-full max-w-full border-b border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md">
         <div className="w-full max-w-full overflow-hidden px-3 py-2 flex items-center justify-between max-w-7xl mx-auto min-h-[52px] sm:min-h-[64px]">
           {/* Zone 1: Single element Brand wordmark with Mobile Hamburger */}
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
