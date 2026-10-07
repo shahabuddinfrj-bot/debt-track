@@ -1,8 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { CheckCircle2, PiggyBank, Wallet } from 'lucide-react';
-import { UserSettings } from '../../types/loan';
-import { storageService, CURRENT_DATE_STR } from '../../services/storage';
-import { formatCurrency, formatDate, getDaysDifference, getRelativeDueDateText } from '../../utils/formatters';
+import { UserSettings } from './types/loan';
+import { storageService, CURRENT_DATE_STR } from './services/storage';
+import { formatCurrency, formatDate, getDaysDifference, getRelativeDueDateText } from './utils/formatters';
 
 interface UpcomingEMIsViewProps {
   settings?: UserSettings;
@@ -295,5 +295,4 @@ export const UpcomingEMIsView: React.FC<UpcomingEMIsViewProps> = ({
   );
 };
 
-export { UpcomingEMIsView };
 export default UpcomingEMIsView;
