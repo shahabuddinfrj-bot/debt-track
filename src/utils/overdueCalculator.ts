@@ -24,6 +24,31 @@ export interface CentralizedOverdueResult {
 }
 
 /**
+ * Normalizes any date string (DD/MM/YYYY, DD-MM-YYYY, or ISO YYYY-MM-DD) into standard YYYY-MM-DD
+ */
+function toStandardIsoDate(rawDate: string): string {
+  if (!rawDate) return '';
+  const clean = rawDate.trim().split('T')[0];
+  if (clean.includes('/')) {
+    const parts = clean.split('/');
+    if (parts.length === 3) {
+      if (parts[2].length === 4) {
+        return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+      } else if (parts[0].length === 4) {
+        return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+      }
+    }
+  }
+  if (clean.includes('-')) {
+    const parts = clean.split('-');
+    if (parts.length === 3 && parts[2].length === 4) {
+      return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+    }
+  }
+  return clean.substring(0, 10);
+}
+
+/**
  * Single, authoritative overdue calculation engine.
  * Ensures 100% mathematical consistency across:
  * - Desktop Dashboard
@@ -39,12 +64,11 @@ export function calculateCentralizedOverdue(
   const overdueList: CentralizedOverdueItem[] = [];
   let totalOverdueAmount = 0;
 
-  // Standardized ISO date string comparison (YYYY-MM-DD)
-  // This is completely immune to timezone parsing bugs across mobile and desktop
-  const baseDateClean = (baseDate || CURRENT_DATE_STR).trim().substring(0, 10);
+  const todayIso = new Date().toISOString().substring(0, 10);
+  const baseDateClean = baseDate ? toStandardIsoDate(baseDate) : todayIso;
 
   // Scan all active/overdue or non-archived loans
-  const validLoans = (loans || []).filter((l) => !l.isArchived);
+  const validLoans = (loans || []).filter((l) => !l.isArchived && l.status !== 'CLOSED');
 
   for (const loan of validLoans) {
     const schedule = getScheduleForLoan(loan.id) || [];
@@ -53,11 +77,11 @@ export function calculateCentralizedOverdue(
       // If fully paid, it is not overdue
       if (item.status === 'PAID') continue;
 
-      const dueDateClean = (item.dueDate || '').trim().substring(0, 10);
-      if (!dueDateClean) continue;
+      const dueDateIso = toStandardIsoDate(item.dueDate || '');
+      if (!dueDateIso) continue;
 
       // Past due condition: due date strictly before base date, or marked as OVERDUE
-      const isPastDue = dueDateClean < baseDateClean;
+      const isPastDue = dueDateIso < baseDateClean;
       const isExplicitOverdue = item.status === 'OVERDUE';
 
       if (isPastDue || isExplicitOverdue) {
@@ -65,10 +89,12 @@ export function calculateCentralizedOverdue(
         const paidAmount = Number(item.paidAmount) || 0;
         const remainingOwed = Math.max(0, emiAmount - paidAmount);
 
-        // Calculate days overdue in a robust, timezone-neutral way
+        if (remainingOwed <= 0) continue;
+
+        // Calculate days overdue in a robust way
         let daysOverdue = 1;
         try {
-          const dueTime = new Date(dueDateClean + 'T00:00:00Z').getTime();
+          const dueTime = new Date(dueDateIso + 'T00:00:00Z').getTime();
           const baseTime = new Date(baseDateClean + 'T00:00:00Z').getTime();
           const diffDays = Math.round((baseTime - dueTime) / (1000 * 60 * 60 * 24));
           daysOverdue = Math.max(1, diffDays);
