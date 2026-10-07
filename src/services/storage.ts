@@ -78,15 +78,12 @@ const DEFAULT_SETTINGS: UserSettings = {
   },
 };
 
-// Standardize any date string to YYYY-MM-DD
 function normalizeDateStr(dateStr: string): string {
   if (!dateStr) return '';
   if (dateStr.includes('/')) {
     const parts = dateStr.split('/');
-    if (parts.length === 3) {
-      if (parts[2].length === 4) {
-        return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
-      }
+    if (parts.length === 3 && parts[2].length === 4) {
+      return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
     }
   }
   return dateStr.slice(0, 10);
@@ -244,6 +241,11 @@ class StorageService {
     return allSchedules[loanId] || [];
   }
 
+  public getOverdueSummary(): CentralizedOverdueResult {
+    const loans = this.getLoans(false);
+    return calculateCentralizedOverdue(loans, (id) => this.getSchedule(id), new Date().toISOString().slice(0, 10));
+  }
+
   public getUnifiedUpcomingPayments(): UnifiedUpcomingItem[] {
     try {
       const items: UnifiedUpcomingItem[] = [];
@@ -393,6 +395,35 @@ class StorageService {
     return { success: true };
   }
 
+  public closeDeposit(depositId: string): boolean {
+    const dep = this.getDeposit(depositId);
+    if (!dep) return false;
+    dep.status = 'CLOSED';
+    this.saveDeposit(dep);
+    return true;
+  }
+
+  public matureDeposit(depositId: string): boolean {
+    const dep = this.getDeposit(depositId);
+    if (!dep) return false;
+    dep.status = 'MATURED';
+    this.saveDeposit(dep);
+    return true;
+  }
+
+  public deleteDeposit(id: string): boolean {
+    let deposits = this.get<Deposit[]>(STORAGE_KEYS.DEPOSITS, []);
+    deposits = deposits.filter((d) => d.id !== id);
+    this.set(STORAGE_KEYS.DEPOSITS, deposits);
+    this.pushToServer();
+    return true;
+  }
+
+  public getDepositTransactions(depositId?: string): DepositTransaction[] {
+    const all = this.get<DepositTransaction[]>(STORAGE_KEYS.DEPOSIT_TRANSACTIONS, []);
+    return depositId ? all.filter((t) => t.depositId === depositId) : all;
+  }
+
   public getDocuments(loanId?: string): LoanDocument[] {
     const docs = this.get<LoanDocument[]>(STORAGE_KEYS.DOCUMENTS, []);
     return loanId ? docs.filter((d) => d.loanId === loanId) : docs;
@@ -456,11 +487,14 @@ class StorageService {
     loan.status = loan.outstandingPrincipal <= 0 ? 'CLOSED' : hasOverdue ? 'OVERDUE' : 'ACTIVE';
   }
 
-  // Dashboard Metrics: Unpaid commitments me se sabse pehli Next EMI dhoondhna
   public getDashboardMetrics(): DashboardMetrics {
     const loans = this.getLoans(false);
     const activeLoans = loans.filter((l) => l.status !== 'CLOSED');
     const closedLoans = loans.filter((l) => l.status === 'CLOSED');
+
+    const overdueSummary = this.getOverdueSummary();
+    const overdueAmount = overdueSummary.overdueAmount;
+    const overdueCount = overdueSummary.overdueCount;
 
     let totalOutstanding = 0;
     let totalMonthlyEmi = 0;
@@ -511,7 +545,6 @@ class StorageService {
       }
     }
 
-    // Sort by Normalized Date
     pendingCommitments.sort((a, b) => a.normDate.localeCompare(b.normDate));
 
     let nearestNextEmi: DashboardMetrics['nextEmiDue'] = null;
@@ -541,8 +574,8 @@ class StorageService {
       totalMonthlyEmi: Number(totalMonthlyEmi.toFixed(2)),
       nextEmiDue: nearestNextEmi,
       emisDueThisMonth,
-      overdueAmount: 0,
-      overdueCount: 0,
+      overdueAmount: Number(overdueAmount.toFixed(2)),
+      overdueCount,
       activeLoansCount: activeLoans.length,
       closedLoansCount: closedLoans.length,
       totalPrincipalBorrowed: Number(totalPrincipalBorrowed.toFixed(2)),
