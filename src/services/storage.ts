@@ -191,9 +191,42 @@ class StorageService {
     return !!realUser && realUser.email.toLowerCase() === MASTER_USER.email.toLowerCase();
   }
 
-  public setCurrentUser(user: AuthUser): void {
+  public setCurrentUser(user: AuthUser | null): void {
     this.impersonatedUser = null;
-    this.set(STORAGE_KEYS.CURRENT_USER, user);
+    if (user) {
+      this.set(STORAGE_KEYS.CURRENT_USER, user);
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+    }
+  }
+
+  // Authentication Handlers
+  public loginUser(email: string, password?: string): { success: boolean; user?: AuthUser; error?: string } {
+    const cleanEmail = email.trim().toLowerCase();
+    if (cleanEmail === MASTER_USER.email.toLowerCase()) {
+      if (password && password !== MASTER_USER.password) {
+        return { success: false, error: 'Incorrect password' };
+      }
+      this.setCurrentUser(MASTER_USER);
+      return { success: true, user: MASTER_USER };
+    }
+
+    const users = this.getUsers();
+    const found = users.find((u) => u.email.toLowerCase() === cleanEmail);
+    if (!found) {
+      return { success: false, error: 'User not found. Please register first.' };
+    }
+    if (password && found.password && found.password !== password) {
+      return { success: false, error: 'Incorrect password' };
+    }
+
+    this.setCurrentUser(found);
+    return { success: true, user: found };
+  }
+
+  public logoutUser(): void {
+    this.setCurrentUser(null);
+    this.setImpersonatedUser(null);
   }
 
   public getSecurityPin(): string {
