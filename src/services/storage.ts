@@ -10,6 +10,7 @@ import {
   PaymentTransaction,
   Prepayment,
   UserSettings,
+  UnifiedUpcomingItem,
 } from '../types/loan';
 import {
   Deposit,
@@ -152,7 +153,6 @@ class StorageService {
         const localLoans = this.get<Loan[]>(STORAGE_KEYS.LOANS, []);
 
         if (data.loans.length === 0 && localLoans.length > 0) {
-          // Push local loans to server so other devices can access them
           await this.pushToServer();
           return true;
         }
@@ -164,15 +164,11 @@ class StorageService {
           let mergedLoans: Loan[] = [];
 
           if (localHasRealLoans && !serverHasRealLoans) {
-            // Local device (e.g. computer where user created 13 loans) has real loans.
-            // Server only has demo data. Prioritize real loans and push to server!
             mergedLoans = localLoans.filter((l: Loan) => !l.isDemo);
             this.set(STORAGE_KEYS.LOANS, mergedLoans);
             await this.pushToServer();
             return true;
           } else if (serverHasRealLoans) {
-            // Server has authoritative real loans from user's primary device.
-            // Remove demo placeholders on this device (e.g. mobile) and adopt real loans!
             const loanMap = new Map<string, Loan>();
             data.loans.filter((l: Loan) => !l.isDemo).forEach((l: Loan) => loanMap.set(l.id, l));
             localLoans.filter((l: Loan) => !l.isDemo).forEach((l: Loan) => {
@@ -181,7 +177,6 @@ class StorageService {
             mergedLoans = Array.from(loanMap.values());
             this.set(STORAGE_KEYS.LOANS, mergedLoans);
           } else {
-            // Both only have demo data
             const loanMap = new Map<string, Loan>();
             localLoans.forEach((l: Loan) => loanMap.set(l.id, l));
             data.loans.forEach((l: Loan) => loanMap.set(l.id, l));
@@ -189,12 +184,10 @@ class StorageService {
             this.set(STORAGE_KEYS.LOANS, mergedLoans);
           }
 
-          // Authoritative schedule merge: server schedules take precedence
           const localSchedules = this.get<Record<string, EMIScheduleItem[]>>(STORAGE_KEYS.SCHEDULES, {});
           const mergedSchedules = { ...localSchedules, ...(data.schedules || {}) };
           this.set(STORAGE_KEYS.SCHEDULES, mergedSchedules);
 
-          // Merge docs
           if (data.documents && Array.isArray(data.documents)) {
             const localDocs = this.get<LoanDocument[]>(STORAGE_KEYS.DOCUMENTS, []);
             const docMap = new Map<string, LoanDocument>();
@@ -203,7 +196,6 @@ class StorageService {
             this.set(STORAGE_KEYS.DOCUMENTS, Array.from(docMap.values()));
           }
 
-          // Merge notes
           if (data.notes && Array.isArray(data.notes)) {
             const localNotes = this.get<LoanNote[]>(STORAGE_KEYS.NOTES, []);
             const noteMap = new Map<string, LoanNote>();
@@ -212,7 +204,6 @@ class StorageService {
             this.set(STORAGE_KEYS.NOTES, Array.from(noteMap.values()));
           }
 
-          // Merge deposits safely without altering loan data
           if (data.deposits && Array.isArray(data.deposits)) {
             const localDeposits = this.get<Deposit[]>(STORAGE_KEYS.DEPOSITS, []);
             const depositMap = new Map<string, Deposit>();
@@ -223,13 +214,11 @@ class StorageService {
             this.set(STORAGE_KEYS.DEPOSITS, Array.from(depositMap.values()));
           }
 
-          // Merge deposit schedules
           if (data.depositSchedules && typeof data.depositSchedules === 'object') {
             const localDepSchedules = this.get<Record<string, DepositScheduleItem[]>>(STORAGE_KEYS.DEPOSIT_SCHEDULES, {});
             this.set(STORAGE_KEYS.DEPOSIT_SCHEDULES, { ...localDepSchedules, ...data.depositSchedules });
           }
 
-          // Merge deposit transactions
           if (data.depositTransactions && Array.isArray(data.depositTransactions)) {
             const localDepTxs = this.get<DepositTransaction[]>(STORAGE_KEYS.DEPOSIT_TRANSACTIONS, []);
             const txMap = new Map<string, DepositTransaction>();
@@ -357,7 +346,7 @@ class StorageService {
   }
 
   public setCurrentUser(user: AuthUser): void {
-    this.impersonatedUser = null; // Clear impersonation on actual login
+    this.impersonatedUser = null;
     this.set(STORAGE_KEYS.CURRENT_USER, user);
     this.logAudit({
       action: 'USER_LOGIN',
@@ -527,7 +516,7 @@ class StorageService {
     const currentUser = this.getCurrentUser();
     const targetUserId = forUserId || currentUser?.id;
     if (!targetUserId) {
-      return []; // Unauthenticated guest visitors see NOTHING
+      return [];
     }
     const allLoans = this.get<Loan[]>(STORAGE_KEYS.LOANS, []);
 
@@ -583,7 +572,6 @@ class StorageService {
 
     this.set(STORAGE_KEYS.LOANS, loans);
 
-    // Save schedule
     const allSchedules = this.get<Record<string, EMIScheduleItem[]>>(
       STORAGE_KEYS.SCHEDULES,
       {}
@@ -634,7 +622,6 @@ class StorageService {
     loans = loans.filter((l) => l.id !== loanId);
     this.set(STORAGE_KEYS.LOANS, loans);
 
-    // Clean up schedule
     const allSchedules = this.get<Record<string, EMIScheduleItem[]>>(
       STORAGE_KEYS.SCHEDULES,
       {}
@@ -650,6 +637,82 @@ class StorageService {
       details: `Permanently deleted loan ${loan.name}`,
     });
     return true;
+  }
+
+  // Unified Upcoming Payments & Contributions
+  public getUnifiedUpcomingPayments(): UnifiedUpcomingItem[] {
+    try {
+      const items: UnifiedUpcomingItem[] = [];
+      const loans = this.getLoans(false);
+
+      for (const loan of loans) {
+        if (loan.status === 'CLOSED') continue;
+        const schedule = this.getSchedule(loan.id);
+
+        for (const emi of schedule) {
+          if (emi.status === 'PAID') continue;
+
+          const daysDiff = getDaysDifference(
+            emi.dueDate,
+            CURRENT_DATE_STR || new Date().toISOString().slice(0, 10)
+          );
+          const remainingAmount = Math.max(0, emi.emiAmount - (emi.paidAmount || 0));
+
+          items.push({
+            id: `loan-emi-${loan.id}-${emi.paymentNo}`,
+            category: 'LOAN_EMI',
+            sourceId: loan.id,
+            name: loan.name,
+            entityName: loan.lender,
+            itemType: loan.loanType,
+            accountNumber: loan.accountNumber,
+            paymentNo: emi.paymentNo,
+            dueDate: emi.dueDate,
+            amount: emi.emiAmount,
+            remainingAmount,
+            daysRemaining: daysDiff,
+          });
+        }
+      }
+
+      const deposits = this.getDeposits(false);
+      for (const deposit of deposits) {
+        if (deposit.status === 'CLOSED' || deposit.status === 'MATURED') continue;
+        const depSchedule = this.getDepositSchedule(deposit.id);
+
+        for (const item of depSchedule) {
+          if (item.status === 'PAID') continue;
+
+          const daysDiff = getDaysDifference(
+            item.dueDate,
+            CURRENT_DATE_STR || new Date().toISOString().slice(0, 10)
+          );
+          const remainingAmount = Math.max(0, item.expectedAmount - (item.paidAmount || 0));
+
+          items.push({
+            id: `dep-contrib-${deposit.id}-${item.installmentNumber}`,
+            category: 'DEPOSIT_CONTRIBUTION',
+            sourceId: deposit.id,
+            name: deposit.name,
+            entityName: deposit.institutionName || 'Deposit Account',
+            itemType: deposit.type,
+            accountNumber: deposit.accountNumber,
+            paymentNo: item.installmentNumber,
+            dueDate: item.dueDate,
+            amount: item.expectedAmount,
+            remainingAmount,
+            daysRemaining: daysDiff,
+          });
+        }
+      }
+
+      // Sort by dueDate
+      items.sort((a, b) => (a.dueDate > b.dueDate ? 1 : -1));
+      return items;
+    } catch (e) {
+      console.error('Failed to compute getUnifiedUpcomingPayments:', e);
+      return [];
+    }
   }
 
   // Record Payment
@@ -681,17 +744,13 @@ class StorageService {
     emiItem.paidAmount = totalPaidOnThisEmi;
     emiItem.actualPaymentDate = transaction.paymentDate;
 
-    // Check if fully paid or partial
     if (totalPaidOnThisEmi >= emiItem.emiAmount - 0.5) {
       emiItem.status = 'PAID';
     } else {
       emiItem.status = 'PARTIAL';
     }
 
-    // Recalculate loan totals from schedule
     this.recalculateLoanMetricsFromSchedule(loan, schedule);
-
-    // Persist
     this.saveLoan(loan, schedule);
 
     this.logAudit({
@@ -732,7 +791,6 @@ class StorageService {
       loan.emiFrequency
     );
 
-    // If foreclosure or balance is 0
     if (prepayment.type === 'FORECLOSURE' || newSchedule.every((s) => s.status === 'PAID')) {
       loan.status = 'CLOSED';
       loan.closedDate = prepayment.date;
@@ -775,7 +833,6 @@ class StorageService {
     loan.nextEmiAmount = 0;
 
     const schedule = this.getSchedule(loanId);
-    // Mark remaining pending EMIs as closed/settled
     schedule.forEach((item) => {
       if (item.status === 'PENDING' || item.status === 'OVERDUE') {
         item.status = 'PAID';
@@ -875,15 +932,10 @@ class StorageService {
       id: 'audit_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
       timestamp: new Date().toISOString(),
     });
-    // Keep max 500 records
     this.set(STORAGE_KEYS.AUDIT, logs.slice(0, 500));
   }
 
-  // ========================================================
-  // DEPOSITS & RECURRING DEPOSITS (RD) PERSISTENCE
-  // Completely isolated from Loans, EMIs, and Loan calculations
-  // ========================================================
-
+  // Deposits & Recurring Deposits
   public getDeposits(includeClosed: boolean = true, forUserId?: string): Deposit[] {
     const currentUser = this.getCurrentUser();
     const targetUserId = forUserId || currentUser?.id;
@@ -968,7 +1020,6 @@ class StorageService {
     deposits = deposits.filter((d) => d.id !== id);
     this.set(STORAGE_KEYS.DEPOSITS, deposits);
 
-    // Clean up schedule for this deposit only
     const allSchedules = this.get<Record<string, DepositScheduleItem[]>>(
       STORAGE_KEYS.DEPOSIT_SCHEDULES,
       {}
@@ -976,7 +1027,6 @@ class StorageService {
     delete allSchedules[id];
     this.set(STORAGE_KEYS.DEPOSIT_SCHEDULES, allSchedules);
 
-    // Clean up transactions for this deposit only
     let allTransactions = this.get<DepositTransaction[]>(
       STORAGE_KEYS.DEPOSIT_TRANSACTIONS,
       []
@@ -1042,7 +1092,6 @@ class StorageService {
     }
     this.set(STORAGE_KEYS.DEPOSIT_TRANSACTIONS, allTxs);
 
-    // If transaction is linked to a schedule item, update schedule item status
     if (transaction.scheduleItemId && transaction.depositId) {
       const schedule = this.getDepositSchedule(transaction.depositId);
       const item = schedule.find((s) => s.id === transaction.scheduleItemId);
@@ -1059,7 +1108,6 @@ class StorageService {
       }
     }
 
-    // Update deposit's current balance and contributions paid
     const deposit = this.getDeposit(transaction.depositId);
     if (deposit) {
       if (transaction.transactionType === 'CONTRIBUTION') {
@@ -1126,22 +1174,18 @@ class StorageService {
     let nextEmi: EMIScheduleItem | null = null;
     let hasOverdue = false;
 
-    // Scan schedule
     for (const item of schedule) {
       if (item.status === 'PAID') {
         emisPaidCount++;
         totalPrincipalPaid += item.principalComponent;
         totalInterestPaid += item.interestComponent;
       } else if (item.status === 'PARTIAL') {
-        // Apportion paid amount to interest then principal
         const paid = item.paidAmount || 0;
         const interestPart = Math.min(paid, item.interestComponent);
         const principalPart = Math.max(0, paid - interestPart);
         totalInterestPaid += interestPart;
         totalPrincipalPaid += principalPart;
       } else {
-        // Pending
-        // Check if overdue relative to CURRENT_DATE_STR
         const diff = getDaysDifference(item.dueDate, CURRENT_DATE_STR);
         if (diff < 0) {
           item.status = 'OVERDUE';
@@ -1187,7 +1231,7 @@ class StorageService {
     }
   }
 
-  // Centralized Overdue Summary (Used by Dashboard, Overdue Management View, and Navigation Banners)
+  // Centralized Overdue Summary
   public getOverdueSummary(): CentralizedOverdueResult {
     const loans = this.getLoans(false);
     return calculateCentralizedOverdue(loans, (id) => this.getSchedule(id), CURRENT_DATE_STR);
@@ -1215,7 +1259,7 @@ class StorageService {
     let earliestUpcomingDate: string | null = null;
     let latestClosureDate: string | null = null;
 
-    const currentYearMonth = CURRENT_DATE_STR.substring(0, 7); // "2026-10"
+    const currentYearMonth = CURRENT_DATE_STR.substring(0, 7);
 
     for (const loan of activeLoans) {
       totalOutstanding += loan.outstandingPrincipal;
@@ -1244,7 +1288,6 @@ class StorageService {
 
         const paid = Number(item.paidAmount) || 0;
 
-        // Check if next upcoming
         if (diff >= 0) {
           if (!earliestUpcomingDate || item.dueDate < earliestUpcomingDate) {
             earliestUpcomingDate = item.dueDate;
@@ -1261,7 +1304,6 @@ class StorageService {
       }
     }
 
-    // Include closed loans in historical borrowed & repaid calculations
     for (const loan of closedLoans) {
       totalPrincipalBorrowed += loan.originalAmount;
       totalPrincipalRepaid += loan.totalPrincipalPaid || loan.originalAmount;
@@ -1325,7 +1367,6 @@ class StorageService {
       if (data.audit) this.set(STORAGE_KEYS.AUDIT, data.audit);
       if (data.settings) this.set(STORAGE_KEYS.SETTINGS, data.settings);
 
-      // Backward compatible restore for deposits
       if (data.deposits && Array.isArray(data.deposits)) {
         this.set(STORAGE_KEYS.DEPOSITS, data.deposits);
       }
@@ -1352,7 +1393,6 @@ class StorageService {
   // Demo Data Generator
   public loadDemoData(): void {
     const currentUserId = this.getCurrentUser()?.id || MASTER_USER.id;
-    // 5 diverse loans: Home Loan, Car Loan, Personal Loan, Gold Loan, Credit Card EMI
     const demoLoans: Loan[] = [
       {
         id: 'demo_loan_1',
@@ -1486,7 +1526,7 @@ class StorageService {
         totalEmis: 12,
         emisPaid: 4,
         emisRemaining: 8,
-        nextEmiDate: '2026-09-20', // OVERDUE by 11 days from 2026-10-01 to demonstrate overdue tracking!
+        nextEmiDate: '2026-09-20',
         nextEmiAmount: 1875,
         expectedClosureDate: '2027-04-20',
         processingFee: 1500,
@@ -1542,7 +1582,6 @@ class StorageService {
       },
     ];
 
-    // Generate schedules for demo loans
     const schedulesMap: Record<string, EMIScheduleItem[]> = {};
 
     demoLoans.forEach((loan) => {
@@ -1557,7 +1596,6 @@ class StorageService {
         loan.emiAmount
       );
 
-      // Pre-fill paid payments
       for (let i = 0; i < schedule.length; i++) {
         const item = schedule[i];
         if (i < loan.emisPaid) {
@@ -1579,7 +1617,6 @@ class StorageService {
             },
           ];
         } else {
-          // Check if overdue
           const diff = getDaysDifference(item.dueDate, CURRENT_DATE_STR);
           if (diff < 0) {
             item.status = 'OVERDUE';
@@ -1592,7 +1629,6 @@ class StorageService {
       schedulesMap[loan.id] = schedule;
     });
 
-    // Save demo loans & schedules (preserving other users' loans)
     const existingLoans = this.get<Loan[]>(STORAGE_KEYS.LOANS, []);
     const otherUserLoans = existingLoans.filter(
       (l) => (l.userId || MASTER_USER.id) !== currentUserId
@@ -1607,7 +1643,6 @@ class StorageService {
     const mergedSchedules = { ...existingSchedules, ...schedulesMap };
     this.set(STORAGE_KEYS.SCHEDULES, mergedSchedules);
 
-    // Add demo documents
     const demoDocs: LoanDocument[] = [
       {
         id: 'doc_demo_1',
