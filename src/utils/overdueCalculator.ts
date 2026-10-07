@@ -1,5 +1,6 @@
 import { EMIScheduleItem, Loan } from '../types/loan';
-import { CURRENT_DATE_STR } from '../services/storage';
+import { Deposit, DepositScheduleItem } from '../types/deposit';
+import { CURRENT_DATE_STR, storageService } from '../services/storage';
 
 export interface CentralizedOverdueItem {
   loanId: string;
@@ -15,6 +16,7 @@ export interface CentralizedOverdueItem {
   daysOverdue: number;
   totalOutstanding: number;
   notes?: string;
+  category?: 'LOAN_EMI' | 'DEPOSIT_CONTRIBUTION';
 }
 
 export interface CentralizedOverdueResult {
@@ -28,7 +30,7 @@ export interface CentralizedOverdueResult {
  */
 function toStandardIsoDate(rawDate: string): string {
   if (!rawDate) return '';
-  const clean = rawDate.trim().split('T')[0];
+  const clean = String(rawDate).trim().split('T')[0];
   if (clean.includes('/')) {
     const parts = clean.split('/');
     if (parts.length === 3) {
@@ -49,12 +51,7 @@ function toStandardIsoDate(rawDate: string): string {
 }
 
 /**
- * Single, authoritative overdue calculation engine.
- * Ensures 100% mathematical consistency across:
- * - Desktop Dashboard
- * - Mobile Dashboard
- * - Overdue Tracker Page
- * - Navigation alert badges & indicators
+ * Authoritative overdue calculation engine for both Loans and Deposits (RD).
  */
 export function calculateCentralizedOverdue(
   loans: Loan[],
@@ -67,20 +64,18 @@ export function calculateCentralizedOverdue(
   const todayIso = new Date().toISOString().substring(0, 10);
   const baseDateClean = baseDate ? toStandardIsoDate(baseDate) : todayIso;
 
-  // Scan all active/overdue or non-archived loans
+  // 1. Scan Loans
   const validLoans = (loans || []).filter((l) => !l.isArchived && l.status !== 'CLOSED');
 
   for (const loan of validLoans) {
     const schedule = getScheduleForLoan(loan.id) || [];
 
     for (const item of schedule) {
-      // If fully paid, it is not overdue
       if (item.status === 'PAID') continue;
 
       const dueDateIso = toStandardIsoDate(item.dueDate || '');
       if (!dueDateIso) continue;
 
-      // Past due condition: due date strictly before base date, or marked as OVERDUE
       const isPastDue = dueDateIso < baseDateClean;
       const isExplicitOverdue = item.status === 'OVERDUE';
 
@@ -91,7 +86,6 @@ export function calculateCentralizedOverdue(
 
         if (remainingOwed <= 0) continue;
 
-        // Calculate days overdue in a robust way
         let daysOverdue = 1;
         try {
           const dueTime = new Date(dueDateIso + 'T00:00:00Z').getTime();
@@ -118,12 +112,72 @@ export function calculateCentralizedOverdue(
           daysOverdue,
           totalOutstanding: loan.outstandingPrincipal || 0,
           notes: item.notes,
+          category: 'LOAN_EMI',
         });
       }
     }
   }
 
-  // Sort descending by most days overdue (highest urgency first)
+  // 2. Scan Deposits & Recurring Deposits (RD)
+  try {
+    if (typeof storageService !== 'undefined' && typeof storageService.getDeposits === 'function') {
+      const deposits = storageService.getDeposits(false) || [];
+      for (const dep of deposits) {
+        if (dep.status === 'CLOSED' || dep.status === 'MATURED') continue;
+        const depSchedule = storageService.getDepositSchedule(dep.id) || [];
+
+        for (const item of depSchedule) {
+          if (item.status === 'PAID') continue;
+
+          const dueDateIso = toStandardIsoDate(item.dueDate || '');
+          if (!dueDateIso) continue;
+
+          const isPastDue = dueDateIso < baseDateClean;
+          const isExplicitOverdue = (item as any).status === 'OVERDUE';
+
+          if (isPastDue || isExplicitOverdue) {
+            const expectedAmount = Number(item.expectedAmount) || 0;
+            const paidAmount = Number(item.paidAmount) || 0;
+            const remainingOwed = Math.max(0, expectedAmount - paidAmount);
+
+            if (remainingOwed <= 0) continue;
+
+            let daysOverdue = 1;
+            try {
+              const dueTime = new Date(dueDateIso + 'T00:00:00Z').getTime();
+              const baseTime = new Date(baseDateClean + 'T00:00:00Z').getTime();
+              const diffDays = Math.round((baseTime - dueTime) / (1000 * 60 * 60 * 24));
+              daysOverdue = Math.max(1, diffDays);
+            } catch {
+              daysOverdue = 1;
+            }
+
+            totalOverdueAmount += remainingOwed;
+
+            overdueList.push({
+              loanId: dep.id,
+              loanName: dep.name,
+              lender: dep.institutionName || 'RD / Deposit',
+              accountNumber: dep.accountNumber || '',
+              loanType: dep.type || 'Recurring Deposit',
+              paymentNo: item.installmentNumber,
+              dueDate: item.dueDate,
+              emiAmount: expectedAmount,
+              paidAmount,
+              overdueAmount: remainingOwed,
+              daysOverdue,
+              totalOutstanding: dep.targetAmount ? Math.max(0, dep.targetAmount - (dep.currentBalance || 0)) : 0,
+              category: 'DEPOSIT_CONTRIBUTION',
+            });
+          }
+        }
+      }
+    }
+  } catch (err) {
+    // Graceful fallback agar circular import ya load time issue ho
+  }
+
+  // Sort descending by highest days overdue
   overdueList.sort((a, b) => b.daysOverdue - a.daysOverdue);
 
   return {
