@@ -19,6 +19,7 @@ import {
   Percent,
   FileText,
   Lock,
+  RotateCcw,
 } from 'lucide-react';
 import { Deposit, DepositScheduleItem, DepositTransaction } from '../../types/deposit';
 import { UserSettings } from '../../types/loan';
@@ -42,6 +43,8 @@ export const DepositDetailView: React.FC<DepositDetailViewProps> = ({
   onEditDeposit,
   onRecordContribution,
 }) => {
+  const [localRefresh, setLocalRefresh] = useState(0);
+
   const deposit = storageService.getDeposit(depositId);
   const schedule = storageService.getDepositSchedule(depositId);
   const transactions = storageService.getDepositTransactions(depositId);
@@ -80,6 +83,23 @@ export const DepositDetailView: React.FC<DepositDetailViewProps> = ({
   const handleClose = () => {
     storageService.closeDeposit(depositId);
     setConfirmClose(false);
+  };
+
+  const handleUndoPayment = (installmentNumber: number) => {
+    const confirmUndo = window.confirm(
+      `Kya aap Installment #${installmentNumber} ke payment ko undo karke wapas UNPAID/PENDING karna chahte hain?`
+    );
+    if (confirmUndo) {
+      const res = (storageService as any).undoDepositPayment
+        ? (storageService as any).undoDepositPayment(depositId, installmentNumber)
+        : { success: false, error: 'Function not found' };
+
+      if (res.success) {
+        setLocalRefresh((prev) => prev + 1);
+      } else {
+        alert(res.error || 'Failed to undo payment');
+      }
+    }
   };
 
   return (
@@ -163,7 +183,7 @@ export const DepositDetailView: React.FC<DepositDetailViewProps> = ({
         </div>
       </div>
 
-      {/* Confirmation Modals */}
+      {/* Confirmation Alerts */}
       {confirmDelete && (
         <div className="p-4 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-rose-900 dark:text-rose-200">
           <div className="flex items-center gap-2">
@@ -233,9 +253,8 @@ export const DepositDetailView: React.FC<DepositDetailViewProps> = ({
         </div>
       )}
 
-      {/* Primary KPI Metric Cards */}
+      {/* KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Current Balance */}
         <div className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xs">
           <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-1">
             <span className="text-xs font-medium">Accumulated Balance</span>
@@ -252,7 +271,6 @@ export const DepositDetailView: React.FC<DepositDetailViewProps> = ({
           </div>
         </div>
 
-        {/* Total Contributions */}
         <div className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xs">
           <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-1">
             <span className="text-xs font-medium">
@@ -270,7 +288,6 @@ export const DepositDetailView: React.FC<DepositDetailViewProps> = ({
           </div>
         </div>
 
-        {/* Interest Rate & Accrued */}
         <div className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xs">
           <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-1">
             <span className="text-xs font-medium">Interest Rate</span>
@@ -288,7 +305,6 @@ export const DepositDetailView: React.FC<DepositDetailViewProps> = ({
           </div>
         </div>
 
-        {/* Maturity & Progress */}
         <div className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xs">
           <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-1">
             <span className="text-xs font-medium">Goal Progress</span>
@@ -337,7 +353,7 @@ export const DepositDetailView: React.FC<DepositDetailViewProps> = ({
         </div>
       </div>
 
-      {/* Tabs for Schedule vs Transactions */}
+      {/* Tabs */}
       <div className="border-b border-slate-200 dark:border-slate-800 flex items-center gap-4">
         {deposit.type === 'RD' && (
           <button
@@ -366,7 +382,7 @@ export const DepositDetailView: React.FC<DepositDetailViewProps> = ({
         </button>
       </div>
 
-      {/* Tab Content: RD Installment Schedule */}
+      {/* Tab: RD Installment Schedule with Undo Support */}
       {deposit.type === 'RD' && activeTab === 'schedule' && (
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs">
           <div className="overflow-x-auto">
@@ -427,6 +443,17 @@ export const DepositDetailView: React.FC<DepositDetailViewProps> = ({
                           Pay
                         </button>
                       )}
+                      {item.status === 'PAID' && (
+                        <button
+                          type="button"
+                          onClick={() => handleUndoPayment(item.installmentNumber)}
+                          title="Undo payment / Reset to Pending"
+                          className="px-2.5 py-1 text-[10px] font-semibold text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/60 rounded hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors inline-flex items-center gap-1"
+                        >
+                          <RotateCcw className="w-2.5 h-2.5" />
+                          <span>Undo</span>
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -436,7 +463,7 @@ export const DepositDetailView: React.FC<DepositDetailViewProps> = ({
         </div>
       )}
 
-      {/* Tab Content: Transaction Ledger */}
+      {/* Tab: Transaction Ledger */}
       {(activeTab === 'transactions' || deposit.type !== 'RD') && (
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs">
           {transactions.length === 0 ? (
@@ -501,3 +528,5 @@ export const DepositDetailView: React.FC<DepositDetailViewProps> = ({
     </div>
   );
 };
+
+export default DepositDetailView;
