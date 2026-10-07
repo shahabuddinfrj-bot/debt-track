@@ -140,6 +140,8 @@ class StorageService {
         if (cloudData.notes) this.set(STORAGE_KEYS.NOTES, cloudData.notes);
         if (cloudData.settings) this.set(STORAGE_KEYS.SETTINGS, cloudData.settings);
         if (cloudData.deposits) this.set(STORAGE_KEYS.DEPOSITS, cloudData.deposits);
+        if (cloudData.depositSchedules) this.set(STORAGE_KEYS.DEPOSIT_SCHEDULES, cloudData.depositSchedules);
+        if (cloudData.depositTransactions) this.set(STORAGE_KEYS.DEPOSIT_TRANSACTIONS, cloudData.depositTransactions);
         return true;
       }
     } catch {}
@@ -274,9 +276,22 @@ class StorageService {
     return allSchedules[loanId] || [];
   }
 
-  public getOverdueSummary(): CentralizedOverdueResult {
+  public getOverdueSummary(): any {
     const loans = this.getLoans(false);
-    return calculateCentralizedOverdue(loans, (id) => this.getSchedule(id), new Date().toISOString().slice(0, 10));
+    const today = new Date().toISOString().slice(0, 10);
+    const result = calculateCentralizedOverdue(loans, (id) => this.getSchedule(id), today);
+    const totalAmount = result.overdueAmount || 0;
+    const count = result.overdueCount || 0;
+    const hasOverdue = count > 0 || totalAmount > 0;
+
+    return {
+      ...result,
+      totalAmount,
+      count,
+      hasOverdue,
+      overdueAmount: totalAmount,
+      overdueCount: count,
+    };
   }
 
   public getUnifiedUpcomingPayments(): UnifiedUpcomingItem[] {
@@ -405,7 +420,43 @@ class StorageService {
 
   public getDepositSchedule(depositId: string): DepositScheduleItem[] {
     const all = this.get<Record<string, DepositScheduleItem[]>>(STORAGE_KEYS.DEPOSIT_SCHEDULES, {});
-    return all[depositId] || [];
+    let schedule = all[depositId] || [];
+
+    // Fallback: Agar schedule khali ho to RD definition se automatic generate karein
+    if (!schedule || schedule.length === 0) {
+      const dep = this.getDeposit(depositId);
+      if (dep) {
+        const tenureMonths = Number((dep as any).tenureMonths || (dep as any).tenure || 21);
+        const monthlyAmt = Number(dep.monthlyDeposit || (dep as any).monthlyAmount || (dep as any).monthlyInstallment || 0);
+        const startDate = dep.startDate ? new Date(dep.startDate) : new Date();
+
+        if (monthlyAmt > 0 && tenureMonths > 0) {
+          const generated: DepositScheduleItem[] = [];
+          for (let i = 1; i <= tenureMonths; i++) {
+            const dueDate = new Date(startDate);
+            dueDate.setMonth(dueDate.getMonth() + (i - 1));
+            const dueDateStr = dueDate.toISOString().slice(0, 10);
+            
+            // Check agar balance ke basis par ye installment paid count ho sakti hai
+            const isAlreadyPaid = (dep.totalContributionsPaid || dep.currentBalance || 0) >= (monthlyAmt * i);
+
+            generated.push({
+              installmentNumber: i,
+              dueDate: dueDateStr,
+              expectedAmount: monthlyAmt,
+              paidAmount: isAlreadyPaid ? monthlyAmt : 0,
+              paidDate: isAlreadyPaid ? dueDateStr : undefined,
+              status: isAlreadyPaid ? 'PAID' : 'PENDING',
+            });
+          }
+          schedule = generated;
+          all[depositId] = generated;
+          this.set(STORAGE_KEYS.DEPOSIT_SCHEDULES, all);
+        }
+      }
+    }
+
+    return schedule;
   }
 
   public undoDepositPayment(depositId: string, installmentNumber: number): { success: boolean; error?: string } {
@@ -453,7 +504,25 @@ class StorageService {
 
   public getDepositTransactions(depositId?: string): DepositTransaction[] {
     const all = this.get<DepositTransaction[]>(STORAGE_KEYS.DEPOSIT_TRANSACTIONS, []);
-    return depositId ? all.filter((t) => t.depositId === depositId) : all;
+    if (depositId) {
+      const filtered = all.filter((t) => t.depositId === depositId);
+      if (filtered.length > 0) return filtered;
+
+      // Agar direct transactions na milein to schedule ke paid items se synthesize karein
+      const schedule = this.getDepositSchedule(depositId);
+      const paidItems = schedule.filter((s) => s.status === 'PAID' || (s.paidAmount || 0) > 0);
+      return paidItems.map((item, idx) => ({
+        id: `tx_dep_${depositId}_${item.installmentNumber}`,
+        depositId,
+        amount: item.paidAmount || item.expectedAmount,
+        transactionDate: item.paidDate || item.dueDate,
+        type: 'DEPOSIT',
+        paymentMethod: 'ONLINE',
+        notes: `Installment #${item.installmentNumber}`,
+        createdAt: item.paidDate || new Date().toISOString(),
+      }));
+    }
+    return all;
   }
 
   public getDocuments(loanId?: string): LoanDocument[] {
@@ -525,8 +594,8 @@ class StorageService {
     const closedLoans = loans.filter((l) => l.status === 'CLOSED');
 
     const overdueSummary = this.getOverdueSummary();
-    const overdueAmount = overdueSummary.overdueAmount;
-    const overdueCount = overdueSummary.overdueCount;
+    const overdueAmount = overdueSummary.totalAmount || overdueSummary.overdueAmount || 0;
+    const overdueCount = overdueSummary.count || overdueSummary.overdueCount || 0;
 
     let totalOutstanding = 0;
     let totalMonthlyEmi = 0;
