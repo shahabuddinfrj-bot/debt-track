@@ -476,5 +476,4 @@ export const LoansListView: React.FC<LoansListViewProps> = ({
   );
 };
 
-export { LoansListView };
 export default LoansListView;
