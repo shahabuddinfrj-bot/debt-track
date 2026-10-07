@@ -20,6 +20,7 @@ import {
   Trash2,
   CheckCircle2,
   AlertTriangle,
+  RotateCcw,
 } from 'lucide-react';
 import {
   EMIScheduleItem,
@@ -65,6 +66,7 @@ export const LoanDetailView: React.FC<LoanDetailViewProps> = ({
   const [newDocNotes, setNewDocNotes] = useState('');
   const [scheduleSearch, setScheduleSearch] = useState('');
   const [scheduleStatusFilter, setScheduleStatusFilter] = useState<string>('ALL');
+  const [localRefresh, setLocalRefresh] = useState(0);
 
   const loan = storageService.getLoanById(loanId);
   const schedule = storageService.getSchedule(loanId);
@@ -88,6 +90,21 @@ export const LoanDetailView: React.FC<LoanDetailViewProps> = ({
       </div>
     );
   }
+
+  // Handle Undo / Revert Payment
+  const handleUndoPayment = (paymentNo: number) => {
+    const confirmUndo = window.confirm(
+      `Kya aap Installment #${paymentNo} ke payment ko undo/cancel karke wapas UNPAID karna chahte hain?`
+    );
+    if (confirmUndo) {
+      const res = storageService.undoPayment(loan.id, paymentNo);
+      if (res.success) {
+        setLocalRefresh((prev) => prev + 1);
+      } else {
+        alert(res.error || 'Failed to undo payment');
+      }
+    }
+  };
 
   // Flatten payment transactions from schedule
   const paymentHistory = schedule.flatMap((item) =>
@@ -121,7 +138,7 @@ export const LoanDetailView: React.FC<LoanDetailViewProps> = ({
       type: newDocType,
       uploadDate: CURRENT_DATE_STR,
       notes: newDocNotes.trim() || undefined,
-      fileSize: '1.2 MB', // realistic simulated attachment metadata
+      fileSize: '1.2 MB',
     };
 
     storageService.saveDocument(doc);
@@ -281,7 +298,7 @@ export const LoanDetailView: React.FC<LoanDetailViewProps> = ({
           )}
         </div>
 
-        {/* 5 Financial Metric Blocks */}
+        {/* Financial Metric Blocks */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 pt-6 text-xs">
           <div>
             <div className="text-slate-600 dark:text-slate-300 uppercase tracking-wider text-[10px]">
@@ -348,7 +365,7 @@ export const LoanDetailView: React.FC<LoanDetailViewProps> = ({
           </div>
         </div>
 
-        {/* Progress Bar & Principal vs Interest Breakdown */}
+        {/* Progress Bar */}
         <div className="mt-6 pt-6 border-t border-slate-100 dark:border-slate-800">
           <div className="flex items-center justify-between text-xs mb-2 font-mono">
             <span className="text-slate-600 dark:text-slate-300">
@@ -557,6 +574,7 @@ export const LoanDetailView: React.FC<LoanDetailViewProps> = ({
                       <td className="py-2 px-3 text-right">
                         {item.status !== 'PAID' && (
                           <button
+                            type="button"
                             onClick={() => onRecordPayment(loan.id, item.paymentNo)}
                             className="px-2 py-0.5 text-[11px] font-medium text-slate-900 dark:text-white border border-slate-300 dark:border-slate-700 rounded hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                           >
@@ -564,9 +582,20 @@ export const LoanDetailView: React.FC<LoanDetailViewProps> = ({
                           </button>
                         )}
                         {item.status === 'PAID' && (
-                          <span className="text-[11px] text-slate-600 dark:text-slate-300">
-                            {formatDate(item.actualPaymentDate, settings.dateFormat)}
-                          </span>
+                          <div className="flex items-center justify-end gap-2">
+                            <span className="text-[11px] text-slate-500">
+                              {formatDate(item.actualPaymentDate, settings.dateFormat)}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleUndoPayment(item.paymentNo)}
+                              title="Undo payment / Reset to Unpaid"
+                              className="px-2 py-0.5 text-[10px] font-semibold text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/60 rounded hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors flex items-center gap-1"
+                            >
+                              <RotateCcw className="w-2.5 h-2.5" />
+                              <span>Undo</span>
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -596,6 +625,7 @@ export const LoanDetailView: React.FC<LoanDetailViewProps> = ({
                     <th className="py-3 px-4">Method</th>
                     <th className="py-3 px-4">Reference / Txn ID</th>
                     <th className="py-3 px-4">Notes</th>
+                    <th className="py-3 px-4 text-right">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -618,6 +648,15 @@ export const LoanDetailView: React.FC<LoanDetailViewProps> = ({
                       </td>
                       <td className="py-3 px-4 text-slate-600 dark:text-slate-300 font-sans italic">
                         {pay.notes || '—'}
+                      </td>
+                      <td className="py-3 px-4 text-right">
+                        <button
+                          type="button"
+                          onClick={() => handleUndoPayment(pay.paymentNo)}
+                          className="px-2 py-0.5 text-[10px] font-semibold text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/60 rounded hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
+                        >
+                          Undo
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -682,7 +721,6 @@ export const LoanDetailView: React.FC<LoanDetailViewProps> = ({
             )}
           </div>
 
-          {/* Upload Modal */}
           {showUploadModal && (
             <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
               <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 max-w-md w-full text-xs space-y-4">
@@ -842,3 +880,5 @@ export const LoanDetailView: React.FC<LoanDetailViewProps> = ({
     </div>
   );
 };
+
+export default LoanDetailView;
