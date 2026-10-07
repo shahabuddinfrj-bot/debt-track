@@ -519,7 +519,7 @@ class StorageService {
     loan.status = loan.outstandingPrincipal <= 0 ? 'CLOSED' : hasOverdue ? 'OVERDUE' : 'ACTIVE';
   }
 
-  public getDashboardMetrics(): DashboardMetrics {
+  public getDashboardMetrics(): any {
     const loans = this.getLoans(false);
     const activeLoans = loans.filter((l) => l.status !== 'CLOSED');
     const closedLoans = loans.filter((l) => l.status === 'CLOSED');
@@ -557,7 +557,7 @@ class StorageService {
       }
     }
 
-    let nearestNextEmi: DashboardMetrics['nextEmiDue'] = null;
+    let nearestNextEmi: any = null;
     const nextLoanEmi = unifiedList.find((item) => item.category === 'LOAN_EMI' && item.daysRemaining >= 0)
       || unifiedList.find((item) => item.category === 'LOAN_EMI');
 
@@ -587,16 +587,21 @@ class StorageService {
       totalOutstanding: Number(totalOutstanding.toFixed(2)),
       totalMonthlyEmi: Number(totalMonthlyEmi.toFixed(2)),
       nextEmiDue: nearestNextEmi,
+      nextPaymentDue: nearestNextEmi,
       emisDueThisMonth,
       overdueAmount: Number(overdueAmount.toFixed(2)),
       overdueCount,
       activeLoansCount: activeLoans.length,
       closedLoansCount: closedLoans.length,
       totalPrincipalBorrowed: Number(totalPrincipalBorrowed.toFixed(2)),
+      totalBorrowed: Number(totalPrincipalBorrowed.toFixed(2)),
       totalPrincipalRepaid: Number(totalPrincipalRepaid.toFixed(2)),
+      totalPrincipalPaid: Number(totalPrincipalRepaid.toFixed(2)),
       totalInterestPaid: Number(totalInterestPaid.toFixed(2)),
       totalInterestRemaining: Number(totalInterestRemaining.toFixed(2)),
+      totalRemainingInterest: Number(totalInterestRemaining.toFixed(2)),
       overallRepaymentProgress: overallProgress,
+      repaymentProgress: overallProgress,
       earliestUpcomingEmiDate: nearestNextEmi ? nearestNextEmi.dueDate : null,
       latestClosureDate: null,
     };
