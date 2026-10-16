@@ -157,6 +157,21 @@ class StorageService {
     this.set(STORAGE_KEYS.SETTINGS, settings);
   }
 
+  public getUserProfile(): NonNullable<UserSettings['userProfile']> {
+    const settings = this.getSettings();
+    return settings.userProfile || MASTER_PROFILE;
+  }
+
+  public saveUserProfile(profile: Partial<NonNullable<UserSettings['userProfile']>>): void {
+    const settings = this.getSettings();
+    settings.userProfile = {
+      ...(settings.userProfile || MASTER_PROFILE),
+      ...profile,
+    };
+    this.saveSettings(settings);
+    this.pushToServer();
+  }
+
   public getUsers(): AuthUser[] {
     const users = this.get<AuthUser[]>(STORAGE_KEYS.USERS, []);
     if (!users.some((u) => u.email.toLowerCase() === MASTER_USER.email.toLowerCase())) {
@@ -467,7 +482,7 @@ class StorageService {
   }
 
   public saveDepositTransaction(transaction: DepositTransaction): void {
-    // 1. Transaction save karein
+    // 1. Transaction list save karein
     const allTx = this.get<DepositTransaction[]>(STORAGE_KEYS.DEPOSIT_TRANSACTIONS, []);
     allTx.unshift(transaction);
     this.set(STORAGE_KEYS.DEPOSIT_TRANSACTIONS, allTx);
@@ -561,7 +576,7 @@ class StorageService {
       const filtered = all.filter((t) => t.depositId === depositId);
       if (filtered.length > 0) return filtered;
 
-      // Agar direct transactions na milein to schedule ke paid items se synthesize karein
+      // Fallback: Agar direct transactions na hon to schedule ke paid items se generate karein
       const schedule = this.getDepositSchedule(depositId);
       const paidItems = schedule.filter((s) => s.status === 'PAID' || (s.paidAmount || 0) > 0);
       return paidItems.map((item) => ({
