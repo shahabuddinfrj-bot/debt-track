@@ -66,15 +66,15 @@ const DEFAULT_SETTINGS: UserSettings = {
   dateFormat: 'DD/MM/YYYY',
   reminderDays: [7, 3, 1, 0],
   isDarkMode: false,
-  userName: '',
+  userName: 'शाहबुद्दीन (Shahabuddin)',
   isAppLockEnabled: false,
   securityPin: '',
   autoLockOnBackground: true,
   userProfile: {
-    name: '',
-    mobile: '',
-    email: '',
-    address: '',
+    name: 'शाहबुद्दीन (Shahabuddin)',
+    mobile: '9042233122',
+    email: 'shahabuddin.frj@gmail.com',
+    address: 'No. 72, 6th Cross, JJ Nagar, Moolakulam, Pondicherry - 605010',
   },
 };
 
@@ -150,7 +150,8 @@ class StorageService {
 
   public getSettings(): UserSettings {
     const s = this.get<UserSettings>(STORAGE_KEYS.SETTINGS, DEFAULT_SETTINGS);
-    return { ...DEFAULT_SETTINGS, ...s, userProfile: s.userProfile || DEFAULT_SETTINGS.userProfile };
+    const profile = s.userProfile && s.userProfile.name ? s.userProfile : MASTER_PROFILE;
+    return { ...DEFAULT_SETTINGS, ...s, userProfile: profile };
   }
 
   public saveSettings(settings: UserSettings): void {
@@ -168,8 +169,37 @@ class StorageService {
       ...(settings.userProfile || MASTER_PROFILE),
       ...profile,
     };
+    if (profile.name) {
+      settings.userName = profile.name;
+    }
     this.saveSettings(settings);
     this.pushToServer();
+  }
+
+  public getSecurityPin(): string {
+    return this.getSettings().securityPin || '';
+  }
+
+  public setSecurityPin(pin: string): void {
+    const settings = this.getSettings();
+    settings.securityPin = pin;
+    if (pin) {
+      settings.isAppLockEnabled = true;
+    }
+    this.saveSettings(settings);
+    this.pushToServer();
+  }
+
+  public setAppLockEnabled(enabled: boolean): void {
+    const settings = this.getSettings();
+    settings.isAppLockEnabled = enabled;
+    this.saveSettings(settings);
+    this.pushToServer();
+  }
+
+  public verifySecurityPin(pin: string): boolean {
+    const currentPin = this.getSecurityPin();
+    return currentPin === pin;
   }
 
   public getUsers(): AuthUser[] {
@@ -244,10 +274,6 @@ class StorageService {
   public logoutUser(): void {
     this.setCurrentUser(null);
     this.setImpersonatedUser(null);
-  }
-
-  public getSecurityPin(): string {
-    return this.getSettings().securityPin || '';
   }
 
   public getLoans(includeArchived: boolean = false): Loan[] {
@@ -437,7 +463,6 @@ class StorageService {
     const all = this.get<Record<string, DepositScheduleItem[]>>(STORAGE_KEYS.DEPOSIT_SCHEDULES, {});
     let schedule = all[depositId] || [];
 
-    // Fallback: Agar schedule khali ho to RD definition se automatic generate karein
     if (!schedule || schedule.length === 0) {
       const dep = this.getDeposit(depositId);
       if (dep) {
@@ -452,7 +477,6 @@ class StorageService {
             dueDate.setMonth(dueDate.getMonth() + (i - 1));
             const dueDateStr = dueDate.toISOString().slice(0, 10);
             
-            // Check agar balance ke basis par ye installment paid count ho sakti hai
             const isAlreadyPaid = (dep.totalContributionsPaid || dep.currentBalance || 0) >= (monthlyAmt * i);
 
             generated.push({
@@ -482,12 +506,10 @@ class StorageService {
   }
 
   public saveDepositTransaction(transaction: DepositTransaction): void {
-    // 1. Transaction list save karein
     const allTx = this.get<DepositTransaction[]>(STORAGE_KEYS.DEPOSIT_TRANSACTIONS, []);
     allTx.unshift(transaction);
     this.set(STORAGE_KEYS.DEPOSIT_TRANSACTIONS, allTx);
 
-    // 2. Deposit Balance update karein
     const dep = this.getDeposit(transaction.depositId);
     if (dep) {
       const type = (transaction.transactionType || (transaction as any).type || '').toUpperCase();
@@ -505,7 +527,6 @@ class StorageService {
       dep.currentBalance = Math.round(currentBal * 100) / 100;
       dep.updatedAt = new Date().toISOString();
 
-      // 3. Agar Schedule Item Linked hai (RD Installment) to use update karein
       let schedule = this.getDepositSchedule(transaction.depositId);
       if (transaction.scheduleItemId) {
         const itemIdx = schedule.findIndex((s) => s.id === transaction.scheduleItemId);
@@ -576,7 +597,6 @@ class StorageService {
       const filtered = all.filter((t) => t.depositId === depositId);
       if (filtered.length > 0) return filtered;
 
-      // Fallback: Agar direct transactions na hon to schedule ke paid items se generate karein
       const schedule = this.getDepositSchedule(depositId);
       const paidItems = schedule.filter((s) => s.status === 'PAID' || (s.paidAmount || 0) > 0);
       return paidItems.map((item) => ({
