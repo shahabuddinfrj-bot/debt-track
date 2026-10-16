@@ -459,6 +459,59 @@ class StorageService {
     return schedule;
   }
 
+  public saveDepositSchedule(depositId: string, schedule: DepositScheduleItem[]): void {
+    const allSchedules = this.get<Record<string, DepositScheduleItem[]>>(STORAGE_KEYS.DEPOSIT_SCHEDULES, {});
+    allSchedules[depositId] = schedule;
+    this.set(STORAGE_KEYS.DEPOSIT_SCHEDULES, allSchedules);
+    this.pushToServer();
+  }
+
+  public saveDepositTransaction(transaction: DepositTransaction): void {
+    // 1. Transaction save karein
+    const allTx = this.get<DepositTransaction[]>(STORAGE_KEYS.DEPOSIT_TRANSACTIONS, []);
+    allTx.unshift(transaction);
+    this.set(STORAGE_KEYS.DEPOSIT_TRANSACTIONS, allTx);
+
+    // 2. Deposit Balance update karein
+    const dep = this.getDeposit(transaction.depositId);
+    if (dep) {
+      const type = (transaction.transactionType || (transaction as any).type || '').toUpperCase();
+      let currentBal = dep.currentBalance !== undefined ? dep.currentBalance : (dep.principalAmount || 0);
+
+      if (type === 'CONTRIBUTION' || type === 'INTEREST' || type === 'DEPOSIT') {
+        currentBal += transaction.amount;
+        if (type === 'CONTRIBUTION' || type === 'DEPOSIT') {
+          dep.totalContributionsPaid = (dep.totalContributionsPaid || 0) + transaction.amount;
+        }
+      } else if (type === 'WITHDRAWAL') {
+        currentBal = Math.max(0, currentBal - transaction.amount);
+      }
+
+      dep.currentBalance = Math.round(currentBal * 100) / 100;
+      dep.updatedAt = new Date().toISOString();
+
+      // 3. Agar Schedule Item Linked hai (RD Installment) to use update karein
+      let schedule = this.getDepositSchedule(transaction.depositId);
+      if (transaction.scheduleItemId) {
+        const itemIdx = schedule.findIndex((s) => s.id === transaction.scheduleItemId);
+        if (itemIdx >= 0) {
+          const item = schedule[itemIdx];
+          item.paidAmount = (item.paidAmount || 0) + transaction.amount;
+          item.paidDate = transaction.transactionDate;
+          if (item.paidAmount >= item.expectedAmount - 0.5) {
+            item.status = 'PAID';
+          } else if (item.paidAmount > 0) {
+            item.status = 'PARTIAL';
+          }
+        }
+      }
+
+      this.saveDeposit(dep, schedule);
+    } else {
+      this.pushToServer();
+    }
+  }
+
   public undoDepositPayment(depositId: string, installmentNumber: number): { success: boolean; error?: string } {
     const dep = this.getDeposit(depositId);
     if (!dep) return { success: false, error: 'Deposit not found' };
@@ -511,16 +564,17 @@ class StorageService {
       // Agar direct transactions na milein to schedule ke paid items se synthesize karein
       const schedule = this.getDepositSchedule(depositId);
       const paidItems = schedule.filter((s) => s.status === 'PAID' || (s.paidAmount || 0) > 0);
-      return paidItems.map((item, idx) => ({
+      return paidItems.map((item) => ({
         id: `tx_dep_${depositId}_${item.installmentNumber}`,
         depositId,
         amount: item.paidAmount || item.expectedAmount,
         transactionDate: item.paidDate || item.dueDate,
+        transactionType: 'CONTRIBUTION',
         type: 'DEPOSIT',
         paymentMethod: 'ONLINE',
         notes: `Installment #${item.installmentNumber}`,
         createdAt: item.paidDate || new Date().toISOString(),
-      }));
+      } as any));
     }
     return all;
   }
