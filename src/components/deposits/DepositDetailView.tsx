@@ -221,7 +221,7 @@ export const DepositDetailView: React.FC<DepositDetailViewProps> = ({
               Cancel
             </button>
             <button
-              onClick={handleDelete}
+              onClick={handleMature}
               className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold"
             >
               Mark Matured
@@ -432,7 +432,7 @@ export const DepositDetailView: React.FC<DepositDetailViewProps> = ({
                       </span>
                     </td>
                     <td className="py-3 px-4 font-mono text-slate-500 dark:text-slate-400">
-                      {item.paidDate ? formatDate(item.paidDate, settings.dateFormat)} : '—'}
+                      {item.paidDate ? formatDate(item.paidDate, settings.dateFormat) : '—'}
                     </td>
                     <td className="py-3 px-4 text-right">
                       {item.status !== 'PAID' && deposit.status === 'ACTIVE' && (
