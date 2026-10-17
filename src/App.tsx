@@ -45,7 +45,7 @@ export default function App() {
   // Settings
   const [settings, setSettings] = useState<UserSettings>(() => storageService.getSettings());
 
-  // Security App Lock State
+  // Security App Lock State (Only locks on first session load if enabled)
   const [isAppLocked, setIsAppLocked] = useState(() => {
     const currentPin = settings.securityPin || storageService.getSecurityPin();
     const isLockEnabled = settings.isAppLockEnabled;
@@ -131,24 +131,6 @@ export default function App() {
       document.documentElement.classList.remove('dark');
     }
   }, [settings.isDarkMode]);
-
-  // Re-lock when app goes to background if autoLockOnBackground is enabled
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (
-        document.visibilityState === 'hidden' &&
-        settings.isAppLockEnabled &&
-        settings.autoLockOnBackground
-      ) {
-        if (typeof sessionStorage !== 'undefined') {
-          sessionStorage.removeItem('debttrack_session_unlocked');
-        }
-        setIsAppLocked(true);
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [settings.isAppLockEnabled, settings.autoLockOnBackground]);
 
   const triggerRefresh = () => {
     setRefreshTrigger((prev) => prev + 1);
