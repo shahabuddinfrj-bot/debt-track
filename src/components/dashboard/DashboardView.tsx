@@ -7,7 +7,7 @@ import {
   ChevronRight,
   Clock,
   CreditCard,
-  DollarSign,
+  IndianRupee,
   HelpCircle,
   Plus,
   ShieldCheck,
@@ -60,6 +60,53 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     .reduce((sum: number, d: any) => sum + (Number(d.currentBalance ?? d.totalDeposited ?? d.balance ?? 0) || 0), 0);
 
   const calculatedTotalCommitment = (Number(metrics.totalMonthlyEmi) || 0) + calculatedMonthlyDeposit;
+
+  // Real-time Current Month Remaining & Paid Calculation across Loans & Deposits
+  const currentMonthPrefix = new Date().toISOString().slice(0, 7); // 'YYYY-MM'
+  
+  // 1. Loans pending for this month
+  let currentMonthLoanPending = 0;
+  let currentMonthLoanPaid = 0;
+  for (const loan of activeLoans) {
+    const schedule = storageService.getSchedule(loan.id) || [];
+    for (const emi of schedule) {
+      if ((emi.dueDate || '').slice(0, 7) === currentMonthPrefix) {
+        if (emi.status === 'PAID') {
+          currentMonthLoanPaid += (emi.paidAmount || emi.emiAmount || 0);
+        } else {
+          const rem = Math.max(0, (emi.emiAmount || 0) - (emi.paidAmount || 0));
+          currentMonthLoanPending += rem;
+          currentMonthLoanPaid += (emi.paidAmount || 0);
+        }
+      }
+    }
+  }
+
+  // 2. Deposits pending for this month
+  let currentMonthDepositPending = 0;
+  let currentMonthDepositPaid = 0;
+  for (const dep of depositsList) {
+    if (dep.status === 'CLOSED' || dep.status === 'MATURED') continue;
+    const schedule = storageService.getDepositSchedule(dep.id) || [];
+    for (const item of schedule) {
+      if ((item.dueDate || '').slice(0, 7) === currentMonthPrefix) {
+        if (item.status === 'PAID') {
+          currentMonthDepositPaid += (item.paidAmount || item.expectedAmount || 0);
+        } else {
+          const rem = Math.max(0, (item.expectedAmount || 0) - (item.paidAmount || 0));
+          currentMonthDepositPending += rem;
+          currentMonthDepositPaid += (item.paidAmount || 0);
+        }
+      }
+    }
+  }
+
+  // Agar current month schedule me entries match na ho to total commitment se baseline fallback karein
+  const totalRemainingThisMonth = (currentMonthLoanPending + currentMonthDepositPending) > 0
+    ? (currentMonthLoanPending + currentMonthDepositPending)
+    : Math.max(0, calculatedTotalCommitment - (currentMonthLoanPaid + currentMonthDepositPaid));
+  
+  const totalPaidThisMonth = currentMonthLoanPaid + currentMonthDepositPaid;
 
   // Find loans finishing earliest and latest
   const sortedByClosure = [...activeLoans]
@@ -178,43 +225,63 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </button>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-3 border-t border-slate-700/60">
+        {/* 4 Cards Grid Layout */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-3 border-t border-slate-700/60">
           {/* Card 1: Total Loan EMI */}
-          <div className="p-3 bg-white/5 rounded-xl border border-white/10">
+          <div className="p-3.5 bg-white/5 rounded-xl border border-white/10 flex flex-col justify-between">
             <div className="text-[11px] text-slate-400 font-medium uppercase tracking-wider">
               Total Loan EMI (Borrowing)
             </div>
             <div className="text-2xl font-bold font-mono text-white mt-1">
               {formatCurrency(metrics.totalMonthlyEmi, settings.currencySymbol, settings.currency)}
             </div>
-            <div className="text-[11px] text-slate-400 mt-0.5">
+            <div className="text-[11px] text-slate-400 mt-1">
               {metrics.activeLoansCount} active borrowing loans
             </div>
           </div>
 
           {/* Card 2: Total Deposit Contribution (Savings) */}
-          <div className="p-3 bg-white/5 rounded-xl border border-white/10">
+          <div className="p-3.5 bg-white/5 rounded-xl border border-white/10 flex flex-col justify-between">
             <div className="text-[11px] text-emerald-400 font-medium uppercase tracking-wider">
               Total Deposit Contribution (Savings)
             </div>
             <div className="text-2xl font-bold font-mono text-emerald-400 mt-1">
               {formatCurrency(calculatedMonthlyDeposit, settings.currencySymbol, settings.currency)}
             </div>
-            <div className="text-[11px] text-slate-400 mt-0.5">
+            <div className="text-[11px] text-slate-400 mt-1">
               {calculatedActiveDepositsCount} recurring savings/RD plans
             </div>
           </div>
 
           {/* Card 3: Total Monthly Commitment */}
-          <div className="p-3 bg-emerald-500/10 rounded-xl border border-emerald-500/30">
+          <div className="p-3.5 bg-emerald-500/10 rounded-xl border border-emerald-500/30 flex flex-col justify-between">
             <div className="text-[11px] text-emerald-300 font-bold uppercase tracking-wider">
               Total Monthly Commitment
             </div>
             <div className="text-2xl font-bold font-mono text-emerald-300 mt-1">
               {formatCurrency(calculatedTotalCommitment, settings.currencySymbol, settings.currency)}
             </div>
-            <div className="text-[11px] text-emerald-400/80 mt-0.5">
+            <div className="text-[11px] text-emerald-400/80 mt-1">
               Loan EMI + Deposit Contribution
+            </div>
+          </div>
+
+          {/* Card 4: Remaining / Pending Balance This Month (Naya Card) */}
+          <div className="p-3.5 bg-amber-500/10 rounded-xl border border-amber-500/30 flex flex-col justify-between">
+            <div className="flex items-center justify-between text-amber-400">
+              <span className="text-[11px] font-bold uppercase tracking-wider">
+                Remaining To Pay
+              </span>
+              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-400/20 text-amber-300">
+                This Month
+              </span>
+            </div>
+            <div className="text-2xl font-bold font-mono text-amber-400 mt-1">
+              {formatCurrency(totalRemainingThisMonth, settings.currencySymbol, settings.currency)}
+            </div>
+            <div className="text-[11px] text-slate-300 mt-1 flex items-center justify-between">
+              <span>Paid: <strong className="text-emerald-400 font-mono">{formatCurrency(totalPaidThisMonth, settings.currencySymbol, settings.currency)}</strong></span>
+              <span>{calculatedTotalCommitment > 0 ? `${Math.min(100, Math.round((totalPaidThisMonth / calculatedTotalCommitment) * 100))}% paid` : '0%'}</span>
             </div>
           </div>
         </div>
@@ -226,7 +293,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm">
           <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-2">
             <span className="text-[11px] font-bold uppercase tracking-wider">Total Outstanding</span>
-            <DollarSign className="w-4 h-4" />
+            <IndianRupee className="w-4 h-4" />
           </div>
           <div className="text-2xl font-bold font-mono text-slate-900 dark:text-white tracking-tight">
             {formatCurrency(metrics.totalOutstanding, settings.currencySymbol, settings.currency)}
