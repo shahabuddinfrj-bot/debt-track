@@ -159,6 +159,9 @@ export default function App() {
     if (view !== 'loan-detail') {
       setSelectedLoanId(null);
     }
+    if (view !== 'deposit-detail') {
+      setSelectedDepositId(null);
+    }
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -242,6 +245,7 @@ export default function App() {
   const handleSelectDeposit = (depositId: string) => {
     setSelectedDepositId(depositId);
     setActiveView('deposit-detail');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleOpenAddDeposit = () => {
@@ -394,6 +398,7 @@ export default function App() {
               settings={settings}
               onQuickPay={handleQuickPay}
               onSelectLoan={handleSelectLoan}
+              onSelectDeposit={handleSelectDeposit}
             />
           )}
 
