@@ -338,6 +338,7 @@ export default function App() {
 
           {activeView === 'loan-detail' && selectedLoanId && (
             <LoanDetailView
+              key={`loan_detail_${selectedLoanId}`}
               loanId={selectedLoanId}
               settings={settings}
               onBack={() => setActiveView('loans')}
@@ -363,7 +364,7 @@ export default function App() {
 
           {activeView === 'deposit-detail' && selectedDepositId && (
             <DepositDetailView
-              key={`deposit_detail_${selectedDepositId}_${refreshTrigger}`}
+              key={`deposit_detail_${selectedDepositId}`}
               depositId={selectedDepositId}
               settings={settings}
               onBack={() => setActiveView('deposits')}
