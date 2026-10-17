@@ -17,6 +17,7 @@ interface OverdueManagementViewProps {
   onQuickPay: (loanId: string, emiPaymentNo?: number) => void;
   onSelectLoan: (loanId: string) => void;
   onSelectDeposit?: (depositId: string) => void;
+  setActiveTab?: (tab: string) => void;
 }
 
 export const OverdueManagementView: React.FC<OverdueManagementViewProps> = ({
@@ -24,28 +25,43 @@ export const OverdueManagementView: React.FC<OverdueManagementViewProps> = ({
   onQuickPay,
   onSelectLoan,
   onSelectDeposit,
+  setActiveTab,
 }) => {
-  // Use centralized authoritative overdue summary
+  // Centralized authoritative overdue summary
   const { overdueList, overdueAmount: totalOverdueAmount } = useMemo(
     () => storageService.getOverdueSummary(),
     []
   );
 
   const handleViewDetails = (item: any) => {
-    const isDeposit = item.itemType === 'RD' || item.category === 'DEPOSIT_CONTRIBUTION' || item.loanType === 'RD';
+    const isDeposit =
+      item.itemType === 'RD' ||
+      item.category === 'DEPOSIT_CONTRIBUTION' ||
+      item.loanType === 'RD' ||
+      item.type === 'RD';
     const targetId = item.sourceId || item.loanId || item.depositId;
 
     if (isDeposit) {
       if (onSelectDeposit) {
         onSelectDeposit(targetId);
+        return;
+      }
+      if (setActiveTab) {
+        setActiveTab('deposits');
+        return;
+      }
+
+      // UI Sidebar se "Deposits & Savings" tab dhundh kar click karein
+      const sidebarButtons = Array.from(document.querySelectorAll('button, nav a, div'));
+      const depositsButton = sidebarButtons.find((el) => {
+        const text = el.textContent?.toLowerCase() || '';
+        return text.includes('deposits & savings') || text.includes('deposits');
+      }) as HTMLElement | undefined;
+
+      if (depositsButton) {
+        depositsButton.click();
       } else {
-        // Fallback: Deposits tab click karwa dein ya alert avoid karein
-        const depositsTab = document.querySelector('[data-tab="deposits"]') as HTMLElement;
-        if (depositsTab) {
-          depositsTab.click();
-        } else {
-          onSelectLoan(targetId);
-        }
+        window.location.hash = '#deposits';
       }
     } else {
       onSelectLoan(targetId);
@@ -109,7 +125,11 @@ export const OverdueManagementView: React.FC<OverdueManagementViewProps> = ({
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs divide-y divide-slate-100 dark:divide-slate-800">
           {overdueList.map((item: any) => {
             const unpaidPart = Math.max(0, (item.emiAmount || item.expectedAmount || 0) - (item.paidAmount || 0));
-            const isDeposit = item.itemType === 'RD' || item.category === 'DEPOSIT_CONTRIBUTION' || item.loanType === 'RD';
+            const isDeposit =
+              item.itemType === 'RD' ||
+              item.category === 'DEPOSIT_CONTRIBUTION' ||
+              item.loanType === 'RD' ||
+              item.type === 'RD';
             const targetId = item.sourceId || item.loanId || item.depositId;
 
             return (
@@ -126,7 +146,9 @@ export const OverdueManagementView: React.FC<OverdueManagementViewProps> = ({
                       {item.loanName || item.name}
                     </span>
                     <span className="text-[11px] font-mono text-slate-600 dark:text-slate-300">
-                      {isDeposit ? `Installment #${item.paymentNo || item.installmentNumber}` : `EMI #${item.paymentNo}`}
+                      {isDeposit
+                        ? `Installment #${item.paymentNo || item.installmentNumber}`
+                        : `EMI #${item.paymentNo}`}
                     </span>
                     <span className="text-[10px] font-mono font-bold text-rose-600 dark:text-rose-400 px-1.5 py-0.5 bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-900/60 rounded">
                       {item.daysOverdue} days overdue
