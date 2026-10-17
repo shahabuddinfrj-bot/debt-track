@@ -16,18 +16,41 @@ interface OverdueManagementViewProps {
   settings: UserSettings;
   onQuickPay: (loanId: string, emiPaymentNo?: number) => void;
   onSelectLoan: (loanId: string) => void;
+  onSelectDeposit?: (depositId: string) => void;
 }
 
 export const OverdueManagementView: React.FC<OverdueManagementViewProps> = ({
   settings,
   onQuickPay,
   onSelectLoan,
+  onSelectDeposit,
 }) => {
   // Use centralized authoritative overdue summary
   const { overdueList, overdueAmount: totalOverdueAmount } = useMemo(
     () => storageService.getOverdueSummary(),
     []
   );
+
+  const handleViewDetails = (item: any) => {
+    const isDeposit = item.itemType === 'RD' || item.category === 'DEPOSIT_CONTRIBUTION' || item.loanType === 'RD';
+    const targetId = item.sourceId || item.loanId || item.depositId;
+
+    if (isDeposit) {
+      if (onSelectDeposit) {
+        onSelectDeposit(targetId);
+      } else {
+        // Fallback: Deposits tab click karwa dein ya alert avoid karein
+        const depositsTab = document.querySelector('[data-tab="deposits"]') as HTMLElement;
+        if (depositsTab) {
+          depositsTab.click();
+        } else {
+          onSelectLoan(targetId);
+        }
+      }
+    } else {
+      onSelectLoan(targetId);
+    }
+  };
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
@@ -84,24 +107,26 @@ export const OverdueManagementView: React.FC<OverdueManagementViewProps> = ({
       {/* Overdue Items List */}
       {overdueList.length > 0 && (
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs divide-y divide-slate-100 dark:divide-slate-800">
-          {overdueList.map((item) => {
-            const unpaidPart = item.emiAmount - item.paidAmount;
+          {overdueList.map((item: any) => {
+            const unpaidPart = Math.max(0, (item.emiAmount || item.expectedAmount || 0) - (item.paidAmount || 0));
+            const isDeposit = item.itemType === 'RD' || item.category === 'DEPOSIT_CONTRIBUTION' || item.loanType === 'RD';
+            const targetId = item.sourceId || item.loanId || item.depositId;
 
             return (
               <div
-                key={`${item.loanId}_${item.paymentNo}`}
+                key={`${targetId}_${item.paymentNo || item.installmentNumber}`}
                 className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4"
               >
                 <div>
                   <div className="flex items-center gap-2">
                     <span
-                      onClick={() => onSelectLoan(item.loanId)}
+                      onClick={() => handleViewDetails(item)}
                       className="font-semibold text-sm text-slate-900 dark:text-white hover:underline cursor-pointer"
                     >
-                      {item.loanName}
+                      {item.loanName || item.name}
                     </span>
                     <span className="text-[11px] font-mono text-slate-600 dark:text-slate-300">
-                      EMI #{item.paymentNo}
+                      {isDeposit ? `Installment #${item.paymentNo || item.installmentNumber}` : `EMI #${item.paymentNo}`}
                     </span>
                     <span className="text-[10px] font-mono font-bold text-rose-600 dark:text-rose-400 px-1.5 py-0.5 bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-900/60 rounded">
                       {item.daysOverdue} days overdue
@@ -109,9 +134,9 @@ export const OverdueManagementView: React.FC<OverdueManagementViewProps> = ({
                   </div>
 
                   <div className="text-xs text-slate-600 dark:text-slate-300 mt-1 flex flex-wrap items-center gap-2">
-                    <span>{item.lender}</span>
+                    <span>{item.lender || item.entityName}</span>
                     <span>·</span>
-                    <span>{item.loanType}</span>
+                    <span>{item.loanType || item.itemType}</span>
                     <span>·</span>
                     <span className="font-mono">Ref: {item.accountNumber || 'N/A'}</span>
                     <span>·</span>
@@ -136,16 +161,16 @@ export const OverdueManagementView: React.FC<OverdueManagementViewProps> = ({
 
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => onQuickPay(item.loanId, item.paymentNo)}
+                      onClick={() => onQuickPay(targetId, item.paymentNo || item.installmentNumber)}
                       className="px-3.5 py-1.5 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 rounded-lg transition-colors shadow-xs"
                     >
                       Clear Dues
                     </button>
                     <button
-                      onClick={() => onSelectLoan(item.loanId)}
+                      onClick={() => handleViewDetails(item)}
                       className="px-3 py-1.5 text-xs font-medium text-slate-700 dark:text-slate-300 border border-slate-300 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
                     >
-                      View Loan
+                      {isDeposit ? 'View Deposit' : 'View Loan'}
                     </button>
                   </div>
                 </div>
