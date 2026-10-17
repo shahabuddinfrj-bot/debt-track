@@ -5,7 +5,7 @@ import {
   Building,
   CheckCircle2,
   Clock,
-  DollarSign,
+  IndianRupee,
   Edit2,
   HelpCircle,
   PiggyBank,
@@ -221,7 +221,7 @@ export const DepositDetailView: React.FC<DepositDetailViewProps> = ({
               Cancel
             </button>
             <button
-              onClick={handleMature}
+              onClick={handleDelete}
               className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-lg font-bold"
             >
               Mark Matured
@@ -276,7 +276,7 @@ export const DepositDetailView: React.FC<DepositDetailViewProps> = ({
             <span className="text-xs font-medium">
               {deposit.type === 'RD' ? 'Monthly Installment' : 'Principal Deposited'}
             </span>
-            <DollarSign className="w-4 h-4 text-blue-500" />
+            <IndianRupee className="w-4 h-4 text-blue-500" />
           </div>
           <div className="text-xl sm:text-2xl font-mono font-bold text-slate-900 dark:text-white">
             {deposit.type === 'RD' && deposit.monthlyContribution
@@ -432,7 +432,7 @@ export const DepositDetailView: React.FC<DepositDetailViewProps> = ({
                       </span>
                     </td>
                     <td className="py-3 px-4 font-mono text-slate-500 dark:text-slate-400">
-                      {item.paidDate ? formatDate(item.paidDate, settings.dateFormat) : '—'}
+                      {item.paidDate ? formatDate(item.paidDate, settings.dateFormat)} : '—'}
                     </td>
                     <td className="py-3 px-4 text-right">
                       {item.status !== 'PAID' && deposit.status === 'ACTIVE' && (
