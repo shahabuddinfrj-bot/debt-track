@@ -6,7 +6,7 @@ import {
   List as ListIcon,
   ChevronRight,
 } from 'lucide-react';
-import { LoanStatus, UserSettings } from '../../types/loan';
+import { UserSettings } from '../../types/loan';
 import { storageService } from '../../services/storage';
 import { formatCurrency, formatDate } from '../../utils/formatters';
 
@@ -17,6 +17,8 @@ interface LoansListViewProps {
   onQuickPay: (loanId: string) => void;
 }
 
+type LoanTabFilter = 'ACTIVE_GROUP' | 'OVERDUE' | 'CLOSED' | 'ALL';
+
 export const LoansListView: React.FC<LoansListViewProps> = ({
   settings,
   onOpenAddLoan,
@@ -25,11 +27,13 @@ export const LoansListView: React.FC<LoansListViewProps> = ({
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
 
-  const [statusFilter, setStatusFilter] = useState<'ALL' | LoanStatus>(() => {
+  // Default tab is ACTIVE_GROUP (shows Active + Overdue loans, hides Closed loans)
+  const [statusFilter, setStatusFilter] = useState<LoanTabFilter>(() => {
     try {
-      return (sessionStorage.getItem('dt_loans_status_filter') as 'ALL' | LoanStatus) || 'ALL';
+      const saved = sessionStorage.getItem('dt_loans_tab_filter') as LoanTabFilter;
+      return saved || 'ACTIVE_GROUP';
     } catch {
-      return 'ALL';
+      return 'ACTIVE_GROUP';
     }
   });
 
@@ -57,10 +61,10 @@ export const LoansListView: React.FC<LoansListViewProps> = ({
     }
   });
 
-  const updateStatusFilter = (val: 'ALL' | LoanStatus) => {
+  const updateStatusFilter = (val: LoanTabFilter) => {
     setStatusFilter(val);
     try {
-      sessionStorage.setItem('dt_loans_status_filter', val);
+      sessionStorage.setItem('dt_loans_tab_filter', val);
     } catch {}
   };
 
@@ -106,26 +110,53 @@ export const LoansListView: React.FC<LoansListViewProps> = ({
 
   const allLoans = storageService.getLoans(false) || [];
 
+  // Counts for tabs
+  const activeCount = useMemo(
+    () => allLoans.filter((l) => l.status !== 'CLOSED').length,
+    [allLoans]
+  );
+  const overdueCount = useMemo(
+    () => allLoans.filter((l) => l.status === 'OVERDUE').length,
+    [allLoans]
+  );
+  const closedCount = useMemo(
+    () => allLoans.filter((l) => l.status === 'CLOSED').length,
+    [allLoans]
+  );
+
+  // Relevant loans for dropdown options based on current tab
+  const tabBaseLoans = useMemo(() => {
+    if (statusFilter === 'ACTIVE_GROUP') {
+      return allLoans.filter((l) => l.status !== 'CLOSED');
+    }
+    if (statusFilter === 'OVERDUE') {
+      return allLoans.filter((l) => l.status === 'OVERDUE');
+    }
+    if (statusFilter === 'CLOSED') {
+      return allLoans.filter((l) => l.status === 'CLOSED');
+    }
+    return allLoans;
+  }, [allLoans, statusFilter]);
+
   const lenders = useMemo(() => {
     const set = new Set<string>();
-    allLoans.forEach((l) => {
+    tabBaseLoans.forEach((l) => {
       if (l.lender) set.add(l.lender);
     });
     return Array.from(set).sort();
-  }, [allLoans]);
+  }, [tabBaseLoans]);
 
   const loanTypes = useMemo(() => {
     const set = new Set<string>();
-    allLoans.forEach((l) => {
+    tabBaseLoans.forEach((l) => {
       if (l.loanType) set.add(l.loanType);
     });
     return Array.from(set).sort();
-  }, [allLoans]);
+  }, [tabBaseLoans]);
 
   const filteredLoans = useMemo(() => {
-    return allLoans
+    return tabBaseLoans
       .filter((loan) => {
-        if (statusFilter !== 'ALL' && loan.status !== statusFilter) return false;
         if (typeFilter !== 'ALL' && loan.loanType !== typeFilter) return false;
         if (lenderFilter !== 'ALL' && loan.lender !== lenderFilter) return false;
 
@@ -154,7 +185,7 @@ export const LoansListView: React.FC<LoansListViewProps> = ({
         }
         return (a.name || '').localeCompare(b.name || '');
       });
-  }, [allLoans, statusFilter, typeFilter, lenderFilter, searchQuery, sortBy]);
+  }, [tabBaseLoans, typeFilter, lenderFilter, searchQuery, sortBy]);
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
@@ -178,6 +209,88 @@ export const LoansListView: React.FC<LoansListViewProps> = ({
         </button>
       </div>
 
+      {/* Top Separate Tabs for Active Loans vs Closed Loans */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => updateStatusFilter('ACTIVE_GROUP')}
+            className={`px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 ${
+              statusFilter === 'ACTIVE_GROUP'
+                ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-xs'
+                : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-800 hover:text-slate-900 dark:hover:text-white'
+            }`}
+          >
+            <span>Active Loans</span>
+            <span
+              className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono ${
+                statusFilter === 'ACTIVE_GROUP'
+                  ? 'bg-slate-800 text-slate-200 dark:bg-slate-200 dark:text-slate-900'
+                  : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+              }`}
+            >
+              {activeCount}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => updateStatusFilter('OVERDUE')}
+            className={`px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 ${
+              statusFilter === 'OVERDUE'
+                ? 'bg-rose-600 text-white shadow-xs'
+                : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-800 hover:text-rose-600'
+            }`}
+          >
+            <span>Overdue</span>
+            <span
+              className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono ${
+                statusFilter === 'OVERDUE'
+                  ? 'bg-rose-700 text-white'
+                  : 'bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300'
+              }`}
+            >
+              {overdueCount}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => updateStatusFilter('CLOSED')}
+            className={`px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 ${
+              statusFilter === 'CLOSED'
+                ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-xs'
+                : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-800 hover:text-slate-900 dark:hover:text-white'
+            }`}
+          >
+            <span>Closed Loans</span>
+            <span
+              className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono ${
+                statusFilter === 'CLOSED'
+                  ? 'bg-slate-800 text-slate-200 dark:bg-slate-200 dark:text-slate-900'
+                  : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+              }`}
+            >
+              {closedCount}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => updateStatusFilter('ALL')}
+            className={`px-3 py-2 rounded-lg text-xs font-medium transition-colors flex items-center gap-1.5 ${
+              statusFilter === 'ALL'
+                ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 font-semibold shadow-xs'
+                : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-800 hover:text-slate-900 dark:hover:text-white'
+            }`}
+          >
+            <span>All</span>
+            <span className="text-[10px] font-mono opacity-80">({allLoans.length})</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Search, Sort & Dropdown Filters */}
       <div className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl space-y-3">
         <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
           <div className="relative flex-1">
@@ -191,7 +304,37 @@ export const LoansListView: React.FC<LoansListViewProps> = ({
             />
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {lenders.length > 0 && (
+              <select
+                value={lenderFilter}
+                onChange={(e) => updateLenderFilter(e.target.value)}
+                className="text-xs py-2 px-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 focus:outline-none"
+              >
+                <option value="ALL">All Lenders</option>
+                {lenders.map((l) => (
+                  <option key={l} value={l}>
+                    {l}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {loanTypes.length > 0 && (
+              <select
+                value={typeFilter}
+                onChange={(e) => updateTypeFilter(e.target.value)}
+                className="text-xs py-2 px-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 focus:outline-none"
+              >
+                <option value="ALL">All Types</option>
+                {loanTypes.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            )}
+
             <select
               value={sortBy}
               onChange={(e) => updateSortBy(e.target.value as any)}
@@ -229,89 +372,45 @@ export const LoansListView: React.FC<LoansListViewProps> = ({
                 <LayoutGrid className="w-3.5 h-3.5" />
               </button>
             </div>
-          </div>
-        </div>
 
-        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
-          <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800/80 p-1 rounded-lg">
-            {(['ALL', 'ACTIVE', 'OVERDUE', 'CLOSED'] as const).map((st) => (
+            {(typeFilter !== 'ALL' || lenderFilter !== 'ALL' || searchQuery) && (
               <button
-                key={st}
                 type="button"
-                onClick={() => updateStatusFilter(st)}
-                className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
-                  statusFilter === st
-                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs font-semibold'
-                    : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
-                }`}
+                onClick={() => {
+                  updateTypeFilter('ALL');
+                  updateLenderFilter('ALL');
+                  setSearchQuery('');
+                }}
+                className="text-[11px] font-medium text-rose-600 dark:text-rose-400 hover:underline px-1"
               >
-                {st === 'ALL' ? 'All Loans' : st.charAt(0) + st.slice(1).toLowerCase()}
+                Clear
               </button>
-            ))}
+            )}
           </div>
-
-          {lenders.length > 0 && (
-            <select
-              value={lenderFilter}
-              onChange={(e) => updateLenderFilter(e.target.value)}
-              className="py-1 px-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 text-[11px]"
-            >
-              <option value="ALL">All Lenders</option>
-              {lenders.map((l) => (
-                <option key={l} value={l}>
-                  {l}
-                </option>
-              ))}
-            </select>
-          )}
-
-          {loanTypes.length > 0 && (
-            <select
-              value={typeFilter}
-              onChange={(e) => updateTypeFilter(e.target.value)}
-              className="py-1 px-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 text-[11px]"
-            >
-              <option value="ALL">All Types</option>
-              {loanTypes.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          )}
-
-          {(statusFilter !== 'ALL' || typeFilter !== 'ALL' || lenderFilter !== 'ALL' || searchQuery) && (
-            <button
-              type="button"
-              onClick={() => {
-                updateStatusFilter('ALL');
-                updateTypeFilter('ALL');
-                updateLenderFilter('ALL');
-                setSearchQuery('');
-              }}
-              className="text-[11px] text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white ml-auto"
-            >
-              Reset Filters
-            </button>
-          )}
         </div>
       </div>
 
       {filteredLoans.length === 0 ? (
         <div className="p-12 text-center bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl">
           <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
-            No matching loans found
+            {statusFilter === 'CLOSED'
+              ? 'No closed loans found'
+              : statusFilter === 'OVERDUE'
+              ? 'No overdue loans — great job!'
+              : 'No active loans found'}
           </p>
           <p className="text-xs text-slate-600 dark:text-slate-300 mb-4">
-            Try adjusting your search query or active filter settings.
+            Try switching tabs or adjusting your search/filter settings.
           </p>
-          <button
-            type="button"
-            onClick={onOpenAddLoan}
-            className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 dark:bg-white dark:text-slate-900 rounded-lg hover:bg-slate-800 dark:hover:bg-slate-100 transition-colors"
-          >
-            Add New Loan
-          </button>
+          {statusFilter === 'ACTIVE_GROUP' && (
+            <button
+              type="button"
+              onClick={onOpenAddLoan}
+              className="px-4 py-2 text-xs font-semibold text-white bg-slate-900 dark:bg-white dark:text-slate-900 rounded-lg hover:bg-slate-800 dark:hover:bg-slate-100 transition-colors"
+            >
+              Add New Loan
+            </button>
+          )}
         </div>
       ) : viewMode === 'table' ? (
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs">
@@ -376,7 +475,7 @@ export const LoansListView: React.FC<LoansListViewProps> = ({
                         </div>
                       </td>
                       <td className="py-3.5 px-4 font-mono text-slate-700 dark:text-slate-300">
-                        {loan.nextEmiDate ? formatDate(loan.nextEmiDate, settings.dateFormat) : '—'}
+                        {loan.nextEmiDate ? formatDate(loan.nextEmiDate, settings.dateFormat) : 'Paid in full'}
                       </td>
                       <td className="py-3.5 px-4 text-center">
                         <span
