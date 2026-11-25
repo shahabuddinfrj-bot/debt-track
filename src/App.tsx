@@ -33,7 +33,7 @@ export default function App() {
   const [selectedLoanId, setSelectedLoanId] = useState<string | null>(null);
   const [selectedDepositId, setSelectedDepositId] = useState<string | null>(null);
 
-  // Active Multi-User Session (Null by default for guest/unauthenticated visitors)
+  // Active Multi-User Session
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(() => storageService.getCurrentUser());
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
@@ -45,7 +45,7 @@ export default function App() {
   // Settings
   const [settings, setSettings] = useState<UserSettings>(() => storageService.getSettings());
 
-  // Security App Lock State (Only locks on first session load if enabled)
+  // Security App Lock State
   const [isAppLocked, setIsAppLocked] = useState(() => {
     const currentPin = settings.securityPin || storageService.getSecurityPin();
     const isLockEnabled = settings.isAppLockEnabled;
@@ -80,7 +80,7 @@ export default function App() {
   const [depositPaymentTargetId, setDepositPaymentTargetId] = useState<string | null>(null);
   const [depositPaymentTargetInstNo, setDepositPaymentTargetInstNo] = useState<number | undefined>(undefined);
 
-  // Cross-tab and Studio-to-web real-time backend synchronization
+  // Cross-tab and real-time backend synchronization (without remounting views)
   useEffect(() => {
     storageService.pullFromServer().then(() => {
       triggerRefresh();
@@ -109,11 +109,12 @@ export default function App() {
     };
     window.addEventListener('storage', handleStorageEvent);
 
+    // Poll every 15 seconds so UI interactions & open dropdowns are never interrupted
     const timer = setInterval(() => {
       storageService.pullFromServer().then((hasUpdate) => {
         if (hasUpdate) triggerRefresh();
       });
-    }, 2500);
+    }, 15000);
 
     return () => {
       window.removeEventListener('focus', handleFocus);
@@ -297,7 +298,6 @@ export default function App() {
         <main className="flex-1 p-4 md:p-8 pb-24 lg:pb-12 overflow-y-auto">
           {activeView === 'dashboard' && (
             <DashboardView
-              key={`dashboard_${refreshTrigger}`}
               settings={settings}
               onNavigate={handleNavigate}
               onOpenAddLoan={handleOpenAddLoan}
@@ -310,7 +310,6 @@ export default function App() {
 
           {activeView === 'loans' && (
             <LoansListView
-              key={`loans_${refreshTrigger}`}
               settings={settings}
               onOpenAddLoan={handleOpenAddLoan}
               onSelectLoan={handleSelectLoan}
@@ -334,7 +333,6 @@ export default function App() {
 
           {activeView === 'deposits' && (
             <DepositsListView
-              key={`deposits_${refreshTrigger}`}
               settings={settings}
               onOpenAddDeposit={handleOpenAddDeposit}
               onSelectDeposit={handleSelectDeposit}
@@ -358,7 +356,6 @@ export default function App() {
 
           {activeView === 'upcoming' && (
             <UpcomingEMIsView
-              key={`upcoming_${refreshTrigger}`}
               settings={settings}
               onQuickPay={handleQuickPay}
               onSelectLoan={handleSelectLoan}
@@ -368,7 +365,6 @@ export default function App() {
 
           {activeView === 'calendar' && (
             <EMICalendarView
-              key={`calendar_${refreshTrigger}`}
               settings={settings}
               onQuickPay={handleQuickPay}
               onSelectLoan={handleSelectLoan}
@@ -377,7 +373,6 @@ export default function App() {
 
           {activeView === 'overdue' && (
             <OverdueManagementView
-              key={`overdue_${refreshTrigger}`}
               settings={settings}
               onQuickPay={handleQuickPay}
               onSelectLoan={handleSelectLoan}
