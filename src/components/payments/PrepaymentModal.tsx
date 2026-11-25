@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { X, TrendingDown, ArrowDownCircle, CheckCircle2 } from 'lucide-react';
-import { Loan, UserSettings } from '../../types/loan';
+import { X } from 'lucide-react';
+import { UserSettings } from '../../types/loan';
 import { storageService, CURRENT_DATE_STR } from '../../services/storage';
-import { formatCurrency, formatDate } from '../../utils/formatters';
+import { formatCurrency } from '../../utils/formatters';
 import { recalculateScheduleWithPrepayment } from '../../utils/financialCalculations';
 
 interface PrepaymentModalProps {
@@ -31,7 +31,7 @@ export const PrepaymentModal: React.FC<PrepaymentModalProps> = ({
 
   if (!isOpen || !loan) return null;
 
-  const currentOutstanding = loan.outstandingPrincipal;
+  const currentOutstanding = Number(loan.outstandingPrincipal.toFixed(2));
   const numAmount = parseFloat(amount) || 0;
 
   // If Foreclosure is chosen, amount equals outstanding principal
@@ -59,8 +59,14 @@ export const PrepaymentModal: React.FC<PrepaymentModalProps> = ({
       alert('Please enter a prepayment amount greater than zero.');
       return;
     }
-    if (effectiveAmount > currentOutstanding) {
-      alert(`Prepayment cannot exceed the current outstanding principal of ${formatCurrency(currentOutstanding, settings.currencySymbol, settings.currency)}.`);
+    if (effectiveAmount > currentOutstanding + 0.01) {
+      alert(
+        `Prepayment cannot exceed the current outstanding principal of ${formatCurrency(
+          currentOutstanding,
+          settings.currencySymbol,
+          settings.currency
+        )}.`
+      );
       return;
     }
 
@@ -143,8 +149,8 @@ export const PrepaymentModal: React.FC<PrepaymentModalProps> = ({
               <input
                 type="number"
                 required
-                min="1"
-                step="any"
+                min={Math.min(0.01, currentOutstanding)}
+                step="0.01"
                 max={currentOutstanding}
                 placeholder="e.g. 50000"
                 readOnly={prepayType === 'FORECLOSURE'}
@@ -217,7 +223,7 @@ export const PrepaymentModal: React.FC<PrepaymentModalProps> = ({
               Recalculation Impact Preview
             </div>
 
-            {prepayType === 'FORECLOSURE' ? (
+            {prepayType === 'FORECLOSURE' || currentOutstanding - effectiveAmount <= 0.5 ? (
               <div className="text-emerald-700 dark:text-emerald-400 font-medium">
                 Loan will be marked as CLOSED and fully settled. 0 remaining EMIs!
               </div>
@@ -279,3 +285,5 @@ export const PrepaymentModal: React.FC<PrepaymentModalProps> = ({
     </div>
   );
 };
+
+export default PrepaymentModal;
