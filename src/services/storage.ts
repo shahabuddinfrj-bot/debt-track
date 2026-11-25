@@ -312,6 +312,50 @@ class StorageService {
     this.pushToServer();
   }
 
+  // Close a loan manually or via foreclosure (handles any paise rounding residue)
+  public closeLoan(loanId: string, closureDate: string = CURRENT_DATE_STR, remarks: string = 'Fully settled and closed'): boolean {
+    const loan = this.getLoanById(loanId);
+    if (!loan) return false;
+
+    const schedule = this.getSchedule(loanId);
+    for (const item of schedule) {
+      if (item.status !== 'PAID') {
+        item.status = 'PAID';
+        item.paidAmount = item.emiAmount;
+        item.actualPaymentDate = closureDate;
+      }
+      item.closingPrincipal = 0;
+    }
+
+    loan.status = 'CLOSED';
+    loan.outstandingPrincipal = 0;
+    loan.totalPrincipalPaid = loan.originalAmount;
+    loan.emisPaid = schedule.length;
+    loan.emisRemaining = 0;
+    loan.nextEmiDate = '';
+    loan.nextEmiAmount = 0;
+    (loan as any).closedDate = closureDate;
+    if (remarks) {
+      loan.notes = loan.notes ? `${loan.notes} | ${remarks}` : remarks;
+    }
+
+    this.saveLoan(loan, schedule);
+    return true;
+  }
+
+  // Reopen a closed loan
+  public reopenLoan(loanId: string): boolean {
+    const loan = this.getLoanById(loanId);
+    if (!loan) return false;
+    const schedule = this.getSchedule(loanId);
+    this.recalculateLoanMetrics(loan, schedule);
+    if (loan.status === 'CLOSED') {
+      loan.status = 'ACTIVE';
+    }
+    this.saveLoan(loan, schedule);
+    return true;
+  }
+
   public getSchedule(loanId: string): EMIScheduleItem[] {
     const allSchedules = this.get<Record<string, EMIScheduleItem[]>>(STORAGE_KEYS.SCHEDULES, {});
     return allSchedules[loanId] || [];
@@ -671,7 +715,16 @@ class StorageService {
     loan.emisRemaining = Math.max(0, schedule.length - emisPaidCount);
     loan.totalPrincipalPaid = Number(totalPrincipalPaid.toFixed(2));
     loan.totalInterestPaid = Number(totalInterestPaid.toFixed(2));
-    loan.outstandingPrincipal = Math.max(0, Number((loan.originalAmount - totalPrincipalPaid).toFixed(2)));
+
+    // Absorb any <= ₹0.50 decimal rounding residue when calculating outstanding principal
+    const rawOutstanding = Number((loan.originalAmount - totalPrincipalPaid).toFixed(2));
+    if (rawOutstanding <= 0.5 || (schedule.length > 0 && emisPaidCount === schedule.length && rawOutstanding <= 1)) {
+      loan.outstandingPrincipal = 0;
+      loan.totalPrincipalPaid = loan.originalAmount;
+    } else {
+      loan.outstandingPrincipal = Math.max(0, rawOutstanding);
+    }
+
     loan.nextEmiDate = nextEmi ? nextEmi.dueDate : '';
     loan.nextEmiAmount = nextEmi ? nextEmi.emiAmount - (nextEmi.paidAmount || 0) : 0;
     loan.status = loan.outstandingPrincipal <= 0 ? 'CLOSED' : hasOverdue ? 'OVERDUE' : 'ACTIVE';
