@@ -117,10 +117,7 @@ export function generateAmortizationSchedule(
   let currentPrincipal = principal;
 
   for (let i = 1; i <= numberOfEmis; i++) {
-    // Calculate target date for payment #i
-    // month delta = (i - 1) * monthStep
     const targetDate = new Date(baseYear, baseMonth + (i - 1) * monthStep, baseDay);
-    // Format YYYY-MM-DD
     const yyyy = targetDate.getFullYear();
     const mm = String(targetDate.getMonth() + 1).padStart(2, '0');
     const dd = String(targetDate.getDate()).padStart(2, '0');
@@ -137,7 +134,15 @@ export function generateAmortizationSchedule(
       const totalFlatInterest = principal * (annualRatePct / 100) * years;
       interestComponent = Number((totalFlatInterest / numberOfEmis).toFixed(2));
       principalComponent = Number((principal / numberOfEmis).toFixed(2));
-      closingPrincipal = Math.max(0, Number((openingPrincipal - principalComponent).toFixed(2)));
+
+      // Fix: Absorb any 1-50 paise rounding residual on the final installment
+      if (i === numberOfEmis || Math.abs(openingPrincipal - principalComponent) <= 0.5) {
+        principalComponent = openingPrincipal;
+        installmentEmi = Number((principalComponent + interestComponent).toFixed(2));
+        closingPrincipal = 0;
+      } else {
+        closingPrincipal = Math.max(0, Number((openingPrincipal - principalComponent).toFixed(2)));
+      }
     } else if (interestType === 'INTEREST_ONLY') {
       interestComponent = Number((openingPrincipal * periodicRate).toFixed(2));
       if (i === numberOfEmis) {
@@ -153,8 +158,12 @@ export function generateAmortizationSchedule(
       interestComponent = Number((openingPrincipal * periodicRate).toFixed(2));
       principalComponent = Number((installmentEmi - interestComponent).toFixed(2));
 
-      // Handle final installment balance edge cases
-      if (i === numberOfEmis || principalComponent >= openingPrincipal) {
+      // Handle final installment balance edge cases & paise rounding residual
+      if (
+        i === numberOfEmis ||
+        principalComponent >= openingPrincipal ||
+        Math.abs(openingPrincipal - principalComponent) <= 0.5
+      ) {
         principalComponent = openingPrincipal;
         installmentEmi = Number((principalComponent + interestComponent).toFixed(2));
         closingPrincipal = 0;
@@ -196,9 +205,7 @@ export function recalculateScheduleWithPrepayment(
   interestType: InterestType,
   frequency: EMIFrequency = 'MONTHLY'
 ): EMIScheduleItem[] {
-  // Split schedule into past (already paid/partial) and remaining (unpaid)
   const newSchedule: EMIScheduleItem[] = [];
-  let foundPrepaymentPoint = false;
   let remainingPrincipal = 0;
 
   for (const item of existingSchedule) {
@@ -206,16 +213,15 @@ export function recalculateScheduleWithPrepayment(
       newSchedule.push({ ...item });
       remainingPrincipal = item.closingPrincipal;
     } else {
-      foundPrepaymentPoint = true;
       break;
     }
   }
 
-  // Deduct prepayment amount from remaining principal
-  const adjustedPrincipal = Math.max(0, remainingPrincipal - prepaymentAmount);
+  // Deduct prepayment amount from remaining principal (tolerance <= 0.50 paise)
+  const rawAdjusted = remainingPrincipal - prepaymentAmount;
+  const adjustedPrincipal = rawAdjusted <= 0.5 ? 0 : Number(rawAdjusted.toFixed(2));
 
   if (adjustedPrincipal <= 0) {
-    // Loan is completely paid off / foreclosed
     return newSchedule;
   }
 
@@ -229,7 +235,6 @@ export function recalculateScheduleWithPrepayment(
   const periodicRate = annualRatePct / (periodsPerYear * 100);
 
   if (reductionOption === 'REDUCE_EMI') {
-    // Keep remaining tenure count the same, compute lower EMI
     const remainingPeriods = unservedItems.length;
     let newEmi = 0;
 
@@ -249,7 +254,11 @@ export function recalculateScheduleWithPrepayment(
       let principalComp = Number((newEmi - interest).toFixed(2));
       let installment = newEmi;
 
-      if (idx === unservedItems.length - 1 || principalComp >= opening) {
+      if (
+        idx === unservedItems.length - 1 ||
+        principalComp >= opening ||
+        Math.abs(opening - principalComp) <= 0.5
+      ) {
         principalComp = opening;
         installment = Number((principalComp + interest).toFixed(2));
         curP = 0;
@@ -271,7 +280,6 @@ export function recalculateScheduleWithPrepayment(
       if (curP <= 0) break;
     }
   } else {
-    // REDUCE_TENURE: Keep original EMI, payoff faster in fewer installments
     const originalEmi = unservedItems[0].emiAmount;
     let curP = adjustedPrincipal;
     let idx = 0;
@@ -283,7 +291,7 @@ export function recalculateScheduleWithPrepayment(
       let principalComp = Number((originalEmi - interest).toFixed(2));
       let installment = originalEmi;
 
-      if (principalComp >= opening) {
+      if (principalComp >= opening || Math.abs(opening - principalComp) <= 0.5) {
         principalComp = opening;
         installment = Number((principalComp + interest).toFixed(2));
         curP = 0;
@@ -345,12 +353,10 @@ export function calculateTenureFromPrincipalEMI(
   const periodsPerYear = frequency === 'QUARTERLY' ? 4 : 12;
   const periodicRate = annualRatePct / (periodsPerYear * 100);
 
-  // EMI must be greater than monthly interest
   if (emi <= principal * periodicRate) {
-    return 0; // Infinite tenure
+    return 0;
   }
 
-  // n = -ln(1 - (P * r) / EMI) / ln(1 + r)
   const numerator = -Math.log(1 - (principal * periodicRate) / emi);
   const denominator = Math.log(1 + periodicRate);
   const periods = numerator / denominator;
