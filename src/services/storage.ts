@@ -211,6 +211,54 @@ class StorageService {
     return users;
   }
 
+  // Admin Panel Helper Methods
+  public getUserLoansCount(userId: string): number {
+    const allLoans = this.get<Loan[]>(STORAGE_KEYS.LOANS, []);
+    return allLoans.filter((l) => {
+      if (userId === MASTER_USER.id) {
+        return (l.userId || MASTER_USER.id) === MASTER_USER.id && !l.isArchived;
+      }
+      return l.userId === userId && !l.isArchived;
+    }).length;
+  }
+
+  public getUserDepositsCount(userId: string): number {
+    const allDeps = this.get<Deposit[]>(STORAGE_KEYS.DEPOSITS, []);
+    return allDeps.filter((d) => {
+      if (userId === MASTER_USER.id) {
+        return (d.userId || MASTER_USER.id) === MASTER_USER.id;
+      }
+      return d.userId === userId;
+    }).length;
+  }
+
+  public registerUser(name: string, email: string, password?: string): { success: boolean; user?: AuthUser; error?: string } {
+    const cleanEmail = email.trim().toLowerCase();
+    const users = this.getUsers();
+    if (users.some((u) => u.email.toLowerCase() === cleanEmail)) {
+      return { success: false, error: 'An account with this email already exists.' };
+    }
+    const newUser: AuthUser = {
+      id: 'user_' + Date.now(),
+      name: name.trim(),
+      email: cleanEmail,
+      password: password || '123456',
+      role: 'USER',
+      createdAt: new Date().toISOString(),
+    };
+    users.push(newUser);
+    this.set(STORAGE_KEYS.USERS, users);
+    this.setCurrentUser(newUser);
+    return { success: true, user: newUser };
+  }
+
+  public deleteUser(userId: string): boolean {
+    if (userId === MASTER_USER.id) return false;
+    const users = this.getUsers().filter((u) => u.id !== userId);
+    this.set(STORAGE_KEYS.USERS, users);
+    return true;
+  }
+
   private impersonatedUser: AuthUser | null = null;
 
   public getRealUser(): AuthUser | null {
@@ -312,8 +360,60 @@ class StorageService {
     this.pushToServer();
   }
 
-  // Close a loan manually or via foreclosure (handles any paise rounding residue)
-  public closeLoan(loanId: string, closureDate: string = CURRENT_DATE_STR, remarks: string = 'Fully settled and closed'): boolean {
+  // Record Part-Prepayment or Full Foreclosure
+  public recordPrepayment(
+    loanId: string,
+    params: {
+      amount: number;
+      date: string;
+      type: 'PART_PAYMENT' | 'FORECLOSURE';
+      reductionOption: 'REDUCE_TENURE' | 'REDUCE_EMI';
+      notes?: string;
+    }
+  ): { success: boolean; error?: string } {
+    const loan = this.getLoanById(loanId);
+    if (!loan) return { success: false, error: 'Loan not found' };
+
+    const remainingAfter = Number((loan.outstandingPrincipal - params.amount).toFixed(2));
+    if (params.type === 'FORECLOSURE' || remainingAfter <= 0.5) {
+      this.closeLoan(
+        loanId,
+        params.date,
+        params.notes || `Full Foreclosure (${params.amount})`
+      );
+      return { success: true };
+    }
+
+    const existingSchedule = this.getSchedule(loanId);
+    const updatedSchedule = recalculateScheduleWithPrepayment(
+      existingSchedule,
+      params.date,
+      params.amount,
+      params.reductionOption,
+      loan.interestRate,
+      loan.interestType,
+      loan.emiFrequency
+    );
+
+    loan.totalPrincipalPaid = Number((loan.totalPrincipalPaid + params.amount).toFixed(2));
+    loan.outstandingPrincipal = Math.max(0, remainingAfter);
+    const nextUnpaid = updatedSchedule.find((s) => s.status !== 'PAID');
+    loan.emisRemaining = updatedSchedule.filter((s) => s.status !== 'PAID').length;
+    loan.nextEmiDate = nextUnpaid ? nextUnpaid.dueDate : '';
+    loan.nextEmiAmount = nextUnpaid ? nextUnpaid.emiAmount : 0;
+    if (nextUnpaid) loan.emiAmount = nextUnpaid.emiAmount;
+    loan.status = loan.outstandingPrincipal <= 0.5 ? 'CLOSED' : 'ACTIVE';
+
+    this.saveLoan(loan, updatedSchedule);
+    return { success: true };
+  }
+
+  // Close a loan manually or via foreclosure
+  public closeLoan(
+    loanId: string,
+    closureDate: string = CURRENT_DATE_STR,
+    remarks: string = 'Fully settled and closed'
+  ): boolean {
     const loan = this.getLoanById(loanId);
     if (!loan) return false;
 
@@ -437,7 +537,11 @@ class StorageService {
     }
   }
 
-  public recordPayment(loanId: string, paymentNo: number, transaction: Omit<PaymentTransaction, 'id' | 'createdAt' | 'loanId' | 'emiPaymentNo'>): { success: boolean; error?: string } {
+  public recordPayment(
+    loanId: string,
+    paymentNo: number,
+    transaction: Omit<PaymentTransaction, 'id' | 'createdAt' | 'loanId' | 'emiPaymentNo'>
+  ): { success: boolean; error?: string } {
     const loan = this.getLoanById(loanId);
     if (!loan) return { success: false, error: 'Loan not found' };
     const schedule = this.getSchedule(loanId);
@@ -446,7 +550,13 @@ class StorageService {
 
     const paymentId = 'pay_' + Date.now();
     emiItem.payments = emiItem.payments || [];
-    emiItem.payments.push({ ...transaction, id: paymentId, loanId, emiPaymentNo: paymentNo, createdAt: new Date().toISOString() });
+    emiItem.payments.push({
+      ...transaction,
+      id: paymentId,
+      loanId,
+      emiPaymentNo: paymentNo,
+      createdAt: new Date().toISOString(),
+    });
     emiItem.paidAmount = emiItem.payments.reduce((s, p) => s + p.amountPaid, 0);
     emiItem.actualPaymentDate = transaction.paymentDate;
     emiItem.status = emiItem.paidAmount >= emiItem.emiAmount - 0.5 ? 'PAID' : 'PARTIAL';
@@ -478,7 +588,9 @@ class StorageService {
     const currentUser = this.getCurrentUser();
     if (!currentUser) return [];
     const all = this.get<Deposit[]>(STORAGE_KEYS.DEPOSITS, []);
-    const userDeps = all.filter((d) => (currentUser.id === MASTER_USER.id ? (d.userId || MASTER_USER.id) === MASTER_USER.id : d.userId === currentUser.id));
+    const userDeps = all.filter((d) =>
+      currentUser.id === MASTER_USER.id ? (d.userId || MASTER_USER.id) === MASTER_USER.id : d.userId === currentUser.id
+    );
     return includeClosed ? userDeps : userDeps.filter((d) => d.status !== 'CLOSED');
   }
 
@@ -511,7 +623,9 @@ class StorageService {
       const dep = this.getDeposit(depositId);
       if (dep) {
         const tenureMonths = Number((dep as any).tenureMonths || (dep as any).tenure || 21);
-        const monthlyAmt = Number(dep.monthlyDeposit || (dep as any).monthlyAmount || (dep as any).monthlyInstallment || 0);
+        const monthlyAmt = Number(
+          dep.monthlyDeposit || (dep as any).monthlyAmount || (dep as any).monthlyInstallment || 0
+        );
         const startDate = dep.startDate ? new Date(dep.startDate) : new Date();
 
         if (monthlyAmt > 0 && tenureMonths > 0) {
@@ -520,8 +634,8 @@ class StorageService {
             const dueDate = new Date(startDate);
             dueDate.setMonth(dueDate.getMonth() + (i - 1));
             const dueDateStr = dueDate.toISOString().slice(0, 10);
-            
-            const isAlreadyPaid = (dep.totalContributionsPaid || dep.currentBalance || 0) >= (monthlyAmt * i);
+
+            const isAlreadyPaid = (dep.totalContributionsPaid || dep.currentBalance || 0) >= monthlyAmt * i;
 
             generated.push({
               installmentNumber: i,
@@ -557,7 +671,7 @@ class StorageService {
     const dep = this.getDeposit(transaction.depositId);
     if (dep) {
       const type = (transaction.transactionType || (transaction as any).type || '').toUpperCase();
-      let currentBal = dep.currentBalance !== undefined ? dep.currentBalance : (dep.principalAmount || 0);
+      let currentBal = dep.currentBalance !== undefined ? dep.currentBalance : dep.principalAmount || 0;
 
       if (type === 'CONTRIBUTION' || type === 'INTEREST' || type === 'DEPOSIT') {
         currentBal += transaction.amount;
@@ -643,17 +757,20 @@ class StorageService {
 
       const schedule = this.getDepositSchedule(depositId);
       const paidItems = schedule.filter((s) => s.status === 'PAID' || (s.paidAmount || 0) > 0);
-      return paidItems.map((item) => ({
-        id: `tx_dep_${depositId}_${item.installmentNumber}`,
-        depositId,
-        amount: item.paidAmount || item.expectedAmount,
-        transactionDate: item.paidDate || item.dueDate,
-        transactionType: 'CONTRIBUTION',
-        type: 'DEPOSIT',
-        paymentMethod: 'ONLINE',
-        notes: `Installment #${item.installmentNumber}`,
-        createdAt: item.paidDate || new Date().toISOString(),
-      } as any));
+      return paidItems.map(
+        (item) =>
+          ({
+            id: `tx_dep_${depositId}_${item.installmentNumber}`,
+            depositId,
+            amount: item.paidAmount || item.expectedAmount,
+            transactionDate: item.paidDate || item.dueDate,
+            transactionType: 'CONTRIBUTION',
+            type: 'DEPOSIT',
+            paymentMethod: 'ONLINE',
+            notes: `Installment #${item.installmentNumber}`,
+            createdAt: item.paidDate || new Date().toISOString(),
+          } as any)
+      );
     }
     return all;
   }
@@ -669,7 +786,10 @@ class StorageService {
     this.pushToServer();
   }
   public deleteDocument(docId: string): void {
-    this.set(STORAGE_KEYS.DOCUMENTS, this.get<LoanDocument[]>(STORAGE_KEYS.DOCUMENTS, []).filter((d) => d.id !== docId));
+    this.set(
+      STORAGE_KEYS.DOCUMENTS,
+      this.get<LoanDocument[]>(STORAGE_KEYS.DOCUMENTS, []).filter((d) => d.id !== docId)
+    );
     this.pushToServer();
   }
   public getNotes(loanId: string): LoanNote[] {
@@ -716,7 +836,6 @@ class StorageService {
     loan.totalPrincipalPaid = Number(totalPrincipalPaid.toFixed(2));
     loan.totalInterestPaid = Number(totalInterestPaid.toFixed(2));
 
-    // Absorb any <= ₹0.50 decimal rounding residue when calculating outstanding principal
     const rawOutstanding = Number((loan.originalAmount - totalPrincipalPaid).toFixed(2));
     if (rawOutstanding <= 0.5 || (schedule.length > 0 && emisPaidCount === schedule.length && rawOutstanding <= 1)) {
       loan.outstandingPrincipal = 0;
@@ -769,8 +888,9 @@ class StorageService {
     }
 
     let nearestNextEmi: any = null;
-    const nextLoanEmi = unifiedList.find((item) => item.category === 'LOAN_EMI' && item.daysRemaining >= 0)
-      || unifiedList.find((item) => item.category === 'LOAN_EMI');
+    const nextLoanEmi =
+      unifiedList.find((item) => item.category === 'LOAN_EMI' && item.daysRemaining >= 0) ||
+      unifiedList.find((item) => item.category === 'LOAN_EMI');
 
     if (nextLoanEmi) {
       nearestNextEmi = {
@@ -789,9 +909,10 @@ class StorageService {
       totalInterestPaid += loan.totalInterestPaid;
     }
 
-    const overallProgress = totalPrincipalBorrowed > 0 
-      ? Math.min(100, Number(((totalPrincipalRepaid / totalPrincipalBorrowed) * 100).toFixed(1))) 
-      : 0;
+    const overallProgress =
+      totalPrincipalBorrowed > 0
+        ? Math.min(100, Number(((totalPrincipalRepaid / totalPrincipalBorrowed) * 100).toFixed(1)))
+        : 0;
 
     return {
       totalLoans: loans.length,
@@ -818,8 +939,12 @@ class StorageService {
     };
   }
 
-  public exportBackup(): string { return ''; }
-  public restoreBackup(): { success: boolean } { return { success: true }; }
+  public exportBackup(): string {
+    return '';
+  }
+  public restoreBackup(): { success: boolean } {
+    return { success: true };
+  }
   public loadDemoData(): void {}
   public clearDemoData(): void {}
   public clearAllData(): void {}
