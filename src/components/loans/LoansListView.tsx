@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Search,
   Plus,
@@ -24,12 +24,68 @@ export const LoansListView: React.FC<LoansListViewProps> = ({
   onQuickPay,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | LoanStatus>('ALL');
-  const [typeFilter, setTypeFilter] = useState<string>('ALL');
-  const [lenderFilter, setLenderFilter] = useState<string>('ALL');
-  const [sortBy, setSortBy] = useState<'OUTSTANDING_DESC' | 'EMI_DESC' | 'DUE_DATE' | 'NAME'>('OUTSTANDING_DESC');
 
-  // LocalStorage persistence to keep table view active across re-renders
+  const [statusFilter, setStatusFilter] = useState<'ALL' | LoanStatus>(() => {
+    try {
+      return (sessionStorage.getItem('dt_loans_status_filter') as 'ALL' | LoanStatus) || 'ALL';
+    } catch {
+      return 'ALL';
+    }
+  });
+
+  const [typeFilter, setTypeFilter] = useState<string>(() => {
+    try {
+      return sessionStorage.getItem('dt_loans_type_filter') || 'ALL';
+    } catch {
+      return 'ALL';
+    }
+  });
+
+  const [lenderFilter, setLenderFilter] = useState<string>(() => {
+    try {
+      return sessionStorage.getItem('dt_loans_lender_filter') || 'ALL';
+    } catch {
+      return 'ALL';
+    }
+  });
+
+  const [sortBy, setSortBy] = useState<'OUTSTANDING_DESC' | 'EMI_DESC' | 'DUE_DATE' | 'NAME'>(() => {
+    try {
+      return (sessionStorage.getItem('dt_loans_sort_by') as any) || 'OUTSTANDING_DESC';
+    } catch {
+      return 'OUTSTANDING_DESC';
+    }
+  });
+
+  const updateStatusFilter = (val: 'ALL' | LoanStatus) => {
+    setStatusFilter(val);
+    try {
+      sessionStorage.setItem('dt_loans_status_filter', val);
+    } catch {}
+  };
+
+  const updateTypeFilter = (val: string) => {
+    setTypeFilter(val);
+    try {
+      sessionStorage.setItem('dt_loans_type_filter', val);
+    } catch {}
+  };
+
+  const updateLenderFilter = (val: string) => {
+    setLenderFilter(val);
+    try {
+      sessionStorage.setItem('dt_loans_lender_filter', val);
+    } catch {}
+  };
+
+  const updateSortBy = (val: 'OUTSTANDING_DESC' | 'EMI_DESC' | 'DUE_DATE' | 'NAME') => {
+    setSortBy(val);
+    try {
+      sessionStorage.setItem('dt_loans_sort_by', val);
+    } catch {}
+  };
+
+  // LocalStorage persistence to keep table/grid view active across re-renders
   const [viewMode, setViewMode] = useState<'grid' | 'table'>(() => {
     try {
       const saved = localStorage.getItem('debt_track_view_mode');
@@ -47,11 +103,6 @@ export const LoansListView: React.FC<LoansListViewProps> = ({
       console.error(e);
     }
   };
-
-  const [isLoaded, setIsLoaded] = useState(false);
-  useEffect(() => {
-    setIsLoaded(true);
-  }, []);
 
   const allLoans = storageService.getLoans(false) || [];
 
@@ -143,7 +194,7 @@ export const LoansListView: React.FC<LoansListViewProps> = ({
           <div className="flex items-center gap-2">
             <select
               value={sortBy}
-              onChange={(e) => setSortBy(e.target.value as any)}
+              onChange={(e) => updateSortBy(e.target.value as any)}
               className="text-xs py-2 px-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 focus:outline-none"
             >
               <option value="OUTSTANDING_DESC">Highest Outstanding</option>
@@ -187,7 +238,7 @@ export const LoansListView: React.FC<LoansListViewProps> = ({
               <button
                 key={st}
                 type="button"
-                onClick={() => setStatusFilter(st)}
+                onClick={() => updateStatusFilter(st)}
                 className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-colors ${
                   statusFilter === st
                     ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs font-semibold'
@@ -202,7 +253,7 @@ export const LoansListView: React.FC<LoansListViewProps> = ({
           {lenders.length > 0 && (
             <select
               value={lenderFilter}
-              onChange={(e) => setLenderFilter(e.target.value)}
+              onChange={(e) => updateLenderFilter(e.target.value)}
               className="py-1 px-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 text-[11px]"
             >
               <option value="ALL">All Lenders</option>
@@ -217,7 +268,7 @@ export const LoansListView: React.FC<LoansListViewProps> = ({
           {loanTypes.length > 0 && (
             <select
               value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value)}
+              onChange={(e) => updateTypeFilter(e.target.value)}
               className="py-1 px-2.5 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-700 dark:text-slate-300 text-[11px]"
             >
               <option value="ALL">All Types</option>
@@ -233,9 +284,9 @@ export const LoansListView: React.FC<LoansListViewProps> = ({
             <button
               type="button"
               onClick={() => {
-                setStatusFilter('ALL');
-                setTypeFilter('ALL');
-                setLenderFilter('ALL');
+                updateStatusFilter('ALL');
+                updateTypeFilter('ALL');
+                updateLenderFilter('ALL');
                 setSearchQuery('');
               }}
               className="text-[11px] text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white ml-auto"
