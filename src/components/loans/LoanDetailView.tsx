@@ -68,6 +68,10 @@ export const LoanDetailView: React.FC<LoanDetailViewProps> = ({
   const [scheduleStatusFilter, setScheduleStatusFilter] = useState<string>('ALL');
   const [localRefresh, setLocalRefresh] = useState(0);
 
+  // Trigger re-read when refreshTrigger or localRefresh updates
+  void refreshTrigger;
+  void localRefresh;
+
   const loan = storageService.getLoanById(loanId);
   const schedule = storageService.getSchedule(loanId);
   const documents = storageService.getDocuments(loanId);
@@ -115,9 +119,15 @@ export const LoanDetailView: React.FC<LoanDetailViewProps> = ({
     }))
   ).sort((a, b) => b.paymentDate.localeCompare(a.paymentDate));
 
+  // Treat <= ₹0.50 rounding residual as 0
+  const effectiveOutstanding =
+    loan.status === 'CLOSED' || loan.outstandingPrincipal <= 0.5
+      ? 0
+      : loan.outstandingPrincipal;
+
   const progressPct =
     loan.originalAmount > 0
-      ? Math.min(100, Math.round(((loan.originalAmount - loan.outstandingPrincipal) / loan.originalAmount) * 100))
+      ? Math.min(100, Math.round(((loan.originalAmount - effectiveOutstanding) / loan.originalAmount) * 100))
       : 0;
 
   const handleAddNote = (e: React.FormEvent) => {
@@ -125,6 +135,7 @@ export const LoanDetailView: React.FC<LoanDetailViewProps> = ({
     if (!newNoteText.trim()) return;
     storageService.addNote(loan.id, newNoteText.trim());
     setNewNoteText('');
+    setLocalRefresh((prev) => prev + 1);
   };
 
   const handleUploadDocument = (e: React.FormEvent) => {
@@ -145,11 +156,13 @@ export const LoanDetailView: React.FC<LoanDetailViewProps> = ({
     setNewDocName('');
     setNewDocNotes('');
     setShowUploadModal(false);
+    setLocalRefresh((prev) => prev + 1);
   };
 
   const handleDeleteDocument = (docId: string) => {
     if (window.confirm('Are you sure you want to delete this document attachment?')) {
       storageService.deleteDocument(docId);
+      setLocalRefresh((prev) => prev + 1);
     }
   };
 
@@ -160,12 +173,14 @@ export const LoanDetailView: React.FC<LoanDetailViewProps> = ({
     );
     if (confirmReason !== null) {
       storageService.closeLoan(loan.id, CURRENT_DATE_STR, confirmReason);
+      setLocalRefresh((prev) => prev + 1);
     }
   };
 
   const handleReopenLoan = () => {
     if (window.confirm('Do you want to re-open this loan as active?')) {
       storageService.reopenLoan(loan.id);
+      setLocalRefresh((prev) => prev + 1);
     }
   };
 
@@ -305,7 +320,7 @@ export const LoanDetailView: React.FC<LoanDetailViewProps> = ({
               Outstanding Principal
             </div>
             <div className="text-lg font-bold font-mono text-slate-900 dark:text-white tabular-nums mt-0.5">
-              {formatCurrency(loan.outstandingPrincipal, settings.currencySymbol, settings.currency)}
+              {formatCurrency(effectiveOutstanding, settings.currencySymbol, settings.currency)}
             </div>
             <div className="text-[11px] text-slate-600 dark:text-slate-300">
               of {formatCurrency(loan.originalAmount, settings.currencySymbol, settings.currency)}
